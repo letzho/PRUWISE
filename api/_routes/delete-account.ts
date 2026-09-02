@@ -57,6 +57,20 @@ export default defineHandler(async (req, res) => {
     req.requirePost();
 
     /* ------------------------------------------------------------------------
+       DEMO MODE: Protect demo accounts from deletion
+       ------------------------------------------------------------------------ */
+    const DEMO_ACCOUNTS = [
+        'sarah.tan@example.sg',
+        'kristin.henessy@navigator-demo.sg',
+        'admin@navigator-demo.sg'
+    ];
+
+    if (DEMO_ACCOUNTS.includes(user.username.toLowerCase())) {
+        fail(403, 
+            'Demo accounts cannot be deleted. This account is protected for presentation purposes.');
+    }
+
+    /* ------------------------------------------------------------------------
        Refuse the cases that would break the system
        ------------------------------------------------------------------------ */
 
