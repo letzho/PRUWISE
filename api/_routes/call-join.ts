@@ -29,6 +29,7 @@
 
 import { audit, requireLogin } from '../_lib/auth.js';
 import { column } from '../_lib/db.js';
+import { env } from '../_lib/env.js';
 import { defineHandler, fail, ok } from '../_lib/http.js';
 import {
     callPeer, callRole, callTranscript, latestLineId, openRoom,
@@ -49,11 +50,51 @@ import {
    Sent from the server rather than hard-coded in the browser for exactly that
    reason: it is the one piece of call configuration somebody may need to change
    without touching the front end.
+
+   TURN is included by default via Metered Open Relay so calls work on mobile
+   data and locked-down networks. Override with TURN_URLS, TURN_USERNAME and
+   TURN_CREDENTIAL for a production relay (Twilio, Cloudflare, self-hosted).
    ============================================================================= */
-const ICE_SERVERS = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-];
+
+type IceServer = {
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+};
+
+/* Public relay for development and strict NAT fallback. Override via env vars. */
+const DEFAULT_TURN: IceServer = {
+    urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+};
+
+function buildIceServers(): IceServer[] {
+    const servers: IceServer[] = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+
+    const turnUrls = env.turnUrls;
+    const turnUsername = env.turnUsername;
+    const turnCredential = env.turnCredential;
+
+    if (turnUrls && turnUsername && turnCredential) {
+        servers.push({
+            urls: turnUrls.split(',').map((url) => url.trim()).filter(Boolean),
+            username: turnUsername,
+            credential: turnCredential
+        });
+    } else {
+        servers.push(DEFAULT_TURN);
+    }
+
+    return servers;
+}
 
 /* How long the poller should wait between requests. Sent by the server so the pace
    can be changed in one place if it ever needs to. */
@@ -117,7 +158,7 @@ export default defineHandler(async (req) => {
         peer: await callPeer(user, session),
         peerPresent: peerPresent(session, role),
         status: session.status,
-        iceServers: ICE_SERVERS,
+        iceServers: buildIceServers(),
 
         /* Anything already said. A reload mid-call gets the transcript back rather
            than starting from an empty log. */

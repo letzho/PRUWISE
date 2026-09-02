@@ -101,6 +101,20 @@ export const env = {
         return optional('GOOGLE_CLIENT_ID');
     },
 
+    /* WebRTC TURN relay - optional. When all three are set they override the
+       built-in public relay used for strict NAT / mobile networks. */
+    get turnUrls(): string {
+        return optional('TURN_URLS');
+    },
+
+    get turnUsername(): string {
+        return optional('TURN_USERNAME');
+    },
+
+    get turnCredential(): string {
+        return optional('TURN_CREDENTIAL');
+    },
+
     /* --- flags --- */
 
     /* Technical detail in error responses, and reset links shown on screen.
