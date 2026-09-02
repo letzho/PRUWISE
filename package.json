@@ -1,0 +1,32 @@
+{
+  "name": "pruwise",
+  "version": "4.0.0",
+  "private": true,
+  "description": "PRUWise - AI Insurance Navigator. Static vanilla-JS frontend with a TypeScript API on Vercel Functions and Neon Postgres.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "typecheck": "tsc --noEmit",
+    "db:push": "node --env-file=.env.local --experimental-strip-types scripts/db-push.ts",
+    "db:reset-passwords": "node --env-file=.env.local --experimental-strip-types scripts/db-push.ts --reset-passwords",
+    "db:generate-clients": "node --env-file=.env.local --experimental-strip-types scripts/generate-clients.ts",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "1.1.0",
+    "@vercel/blob": "0.27.0",
+    "bcryptjs": "2.4.3",
+    "openai": "4.77.0",
+    "resend": "4.0.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "2.4.6",
+    "@types/node": "22.10.2",
+    "@vercel/node": "5.0.0",
+    "typescript": "5.7.2",
+    "vercel": "^59.5.0"
+  }
+}

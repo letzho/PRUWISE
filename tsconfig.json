@@ -1,0 +1,44 @@
+{
+  /* Vercel compiles each api/*.ts file into its own function. There is no
+     bundler step of our own, so this config exists to typecheck and to tell the
+     editor what the code means - not to emit anything. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+
+    /* No DOM. These are server functions - if something here references
+       `window` or `document` it is a mistake, and leaving DOM out of lib turns
+       that mistake into a compile error instead of a runtime crash.
+
+       js/ is the browser half of the project and is deliberately NOT typechecked
+       by this config: it is ES5 vanilla JavaScript plus jQuery and is excluded
+       below. */
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* scripts/ runs through Node's own type stripping, which does not resolve
+       extensions - so a script importing project code has to name the .ts file
+       exactly. Safe here only because noEmit is true: nothing is compiled, so
+       there is no output in which the extension would be wrong. */
+    "allowImportingTsExtensions": true,
+
+    "noEmit": true
+  },
+  "include": ["api/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "js", "php", ".vercel"]
+}

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+
+    <!-- width=device-width tells phones to use their real width instead of
+         pretending to be a 980px desktop. Without this line nothing else in
+         the responsive CSS would work. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="description"
+        content="AI Insurance Navigator - an agentic AI assistant that helps Financial Representatives advise with clarity, and helps clients understand their protection.">
+
+    <!-- Tells the browser we support both themes, so form controls and
+         scrollbars match. app.js swaps the data-theme attribute above. -->
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#E4002B">
+
+    <title>AI Insurance Navigator</title>
+
+    <!-- A tiny red square favicon, written inline so there is no extra file -->
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23E4002B'/%3E%3Cpath d='M11 22V10h5.2a3.9 3.9 0 0 1 0 7.8H14' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+
+    <!-- Optional web font. If there is no internet the browser silently falls
+         back to the system font listed in css/theme.css, so nothing breaks. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <!-- ===================================================================
+         STYLESHEETS - load in this order, because each builds on the one
+         before it.
+           theme      colours, spacing, fonts (light + dark), plus the reset
+           base       page defaults and small helper classes
+           components buttons, cards, tables, chat bubbles and so on
+           layout     the app shell: sidebar, topbar, bottom navigation
+           pages      login, AI Navigator, simulation, video call
+         =================================================================== -->
+    <!-- ===================================================================
+         ?v=26  - THE CACHE BUSTER. BUMP IT EVERY TIME YOU UPLOAD.
+
+         A browser is allowed to reuse a file it already has, and it decides
+         that by URL. "css/pages.css" is the same URL today as yesterday, so
+         after an upload the browser keeps serving itself the OLD copy and the
+         fix appears not to have worked.
+
+         Adding ?v=26 changes the URL, so it counts as a file the browser has
+         never seen and must fetch.
+
+         THIS HAS ALREADY COST US TWICE. A misspelt formatter was fixed in
+         js/pages-onboarding.js, the file was uploaded, and the live site kept
+         throwing "FMT.date is not a function" from pages-onboarding.js?v=2 -
+         because ?v= had not moved, so no browser ever asked for the new one.
+         Ctrl+Shift+R fixes it for the one person doing it; bumping this number
+         fixes it for everybody who opens the demo.
+
+         Every number below must be THE SAME, and must match APP_BUILD at the
+         top of js/app.js. php/setup.php checks both and complains if not, so a
+         half-done bump is caught before it is uploaded rather than after.
+         =================================================================== -->
+    <link rel="stylesheet" href="css/theme.css?v=26">
+    <link rel="stylesheet" href="css/base.css?v=26">
+    <link rel="stylesheet" href="css/components.css?v=26">
+    <link rel="stylesheet" href="css/layout.css?v=26">
+    <link rel="stylesheet" href="css/pages.css?v=26">
+</head>
+
+<body>
+    <!-- Keyboard users can press Tab then Enter to jump straight to the page -->
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <!--
+        THE WHOLE APP IS DRAWN INTO THIS ONE DIV.
+
+        On first load app.js sends you to #/login and renders the login screen
+        here. Nothing else - no sidebar, no dashboard - exists until you sign
+        in. After logging in, the same div is replaced with the app shell.
+    -->
+    <div id="root">
+        <!-- Shown for the split second before JavaScript takes over -->
+        <div style="display:grid;place-content:center;min-height:100vh;gap:16px;justify-items:center">
+            <div
+                style="width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,#EE1C4B,#E4002B)">
+            </div>
+            <p style="font:600 14px system-ui;color:#5A6274">Loading AI Insurance Navigator...</p>
+        </div>
+    </div>
+
+    <!-- Pop-up dialogs are added here, so they always sit above everything -->
+    <!-- Dropdown panels land here on phones rather than inside the button that
+         opened them. The topbar uses backdrop-filter for its frosted-glass look,
+         and that makes it a containing block for position:fixed - so a panel
+         nested inside it cannot be pinned to the screen and gets cut off at the
+         edge. Out here there is nothing to clip it. See UI.openDrop in js/ui.js. -->
+    <div id="drop-root"></div>
+
+    <div id="modal-root"></div>
+
+    <!-- Small confirmation messages appear here (bottom right of the screen).
+         aria-live="polite" makes screen readers announce them. -->
+    <div id="toast-root" class="toast-wrap" role="status" aria-live="polite"></div>
+
+    <noscript>
+        <div style="max-width:40ch;margin:20vh auto;padding:24px;text-align:center;font:400 16px system-ui">
+            <h1 style="font-size:22px;margin-bottom:12px">JavaScript required</h1>
+            <p>This prototype runs entirely in the browser. Please enable JavaScript to continue.</p>
+        </div>
+    </noscript>
+
+    <!-- ===================================================================
+         SCRIPTS - the order matters, because each file uses the ones above it.
+
+           jquery              the library itself (stored locally, no internet needed)
+           data.js             all the mock data       -> FMT, DATA
+           charts.js           SVG chart builders      -> CHARTS
+           ui.js               reusable components     -> UI
+           ai.js               the mock AI brain       -> AI
+           api.js              talks to the PHP API    -> API
+           app.js              state, router, shell    -> STATE, PAGES, router()
+           call.js             video call + webcam     -> CALL
+           messages.js         PRUWise + every chat     } these add themselves
+           pages-fr.js         representative screens   } to PAGES, so app.js
+           pages-me.js         customer screens         } must be loaded
+           pages-admin.js      the admin console        } before them
+           pages-settings.js   my account, all roles    }
+
+         There is no pages-pruwise.js any more. PRUWise is a conversation in
+         messages.js, not a separate screen - see the notes at the top of it.
+         =================================================================== -->
+    <!-- ?v=26 - see the long note above the stylesheets. Bump on every upload,
+         keep every number here identical, and keep APP_BUILD in js/app.js the
+         same. jQuery gets one too: it never changes, but leaving it off would
+         make the list look inconsistent and invite somebody to "tidy" the
+         others away. -->
+    <script src="js/vendor/jquery-3.7.1.min.js?v=26"></script>
+    <script src="js/data.js?v=26"></script>
+    <script src="js/charts.js?v=26"></script>
+    <script src="js/ui.js?v=26"></script>
+    <script src="js/ai.js?v=26"></script>
+    <script src="js/api.js?v=26"></script>
+    <script src="js/app.js?v=26"></script>
+    <script src="js/call.js?v=26"></script>
+    <script src="js/messages.js?v=26"></script>
+    <script src="js/pages-calendar.js?v=26"></script>
+    <script src="js/pages-fr.js?v=26"></script>
+
+    <!-- Live transcribe for an in-person meeting. AFTER pages-fr.js, because it
+         calls frBook() from there to fill its client picker. -->
+    <script src="js/pages-inperson.js?v=26"></script>
+    <script src="js/pages-me.js?v=26"></script>
+    <script src="js/pages-onboarding.js?v=26"></script>
+    <script src="js/pages-admin.js?v=26"></script>
+    <script src="js/pages-settings.js?v=26"></script>
+</body>
+
+</html>
