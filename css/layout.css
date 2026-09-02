@@ -1,0 +1,887 @@
+/* ==========================================================================
+   layout.css
+   --------------------------------------------------------------------------
+   The application "shell": sidebar + topbar + page area + bottom navigation.
+
+   THE IMPORTANT IDEA — three genuinely different navigation designs,
+   not one desktop layout squashed down:
+
+     320-767px  (phone)   sidebar is hidden off-screen and slides in from the
+                          left when you tap the hamburger. A bottom navigation
+                          bar gives one-tap access to the 5 main screens.
+     768-1023px (tablet)  sidebar becomes a narrow 76px strip of icons.
+                          Hover it and it expands to show labels.
+                          No bottom bar (the rail is always visible).
+     1024px+    (laptop)  full sidebar with labels and grouped sections.
+     1440px+    (desktop) slightly wider sidebar and roomier spacing.
+
+   We build mobile first, then add the bigger screens with min-width media
+   queries. This is why the phone rules come first with no media query.
+   ========================================================================== */
+
+.shell {
+    display: flex;
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100dvh;
+}
+
+/* ==========================================================================
+   SIDEBAR
+   ========================================================================== */
+.sidebar {
+    /* position:fixed takes it out of the page flow so it can slide over
+       the content on a phone. */
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    width: min(86vw, 300px);
+    /* never wider than the phone screen */
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    /* Start pushed fully off the left edge (-101% avoids a 1px sliver) */
+    transform: translateX(-101%);
+    transition: transform var(--slow) var(--ease);
+}
+
+/* app.js toggles this class when the hamburger is tapped */
+.sidebar.is-open {
+    transform: none;
+    box-shadow: var(--sh-xl);
+}
+
+.sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    min-height: var(--topbar-h);
+    padding: var(--sp-4);
+    border-bottom: 1px solid var(--divider);
+    flex-shrink: 0;
+}
+
+.sidebar-nav {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: var(--sp-4) var(--sp-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-5);
+}
+
+.nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.nav-group-label {
+    padding: 0 var(--sp-3) var(--sp-2);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* One navigation link */
+.navlink {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--r-md);
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    min-width: 0;
+    transition: background var(--normal) var(--ease), color var(--normal) var(--ease);
+}
+
+.navlink:hover {
+    background: var(--surface-3);
+    color: var(--text-strong);
+}
+
+.navlink-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    flex-shrink: 0;
+}
+
+.navlink-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.navlink-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    flex-shrink: 0;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft-2);
+    color: var(--brand-text);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+/* ==========================================================================
+   THE CURRENT PAGE, AND WHY THIS CHANGED
+
+   REPORTED: "even though I am still in the client tab the message tab still
+   lights up, and also brighter."
+
+   It was doing exactly that, and the CSS said so out loud. `.navlink-ai` carried
+   the full brand gradient with white text and called itself "deliberately the
+   brightest thing in the sidebar" - permanently, whether you were on that page or
+   not. Meanwhile the ACTUAL current page got `--brand-soft`, a pale tint.
+
+   So the sidebar had two signals fighting and the wrong one won:
+
+     the loudest item was the AI link, always
+     the selected item was quieter than an unselected one
+     and `.navlink-ai.is-on` was styled IDENTICALLY to `.navlink-ai`, with the
+     left-edge marker explicitly hidden - so when Messages really was the current
+     page there was no way to tell
+
+   The fix inverts it. SELECTION IS NOW THE STRONGEST THING IN THE SIDEBAR,
+   because "where am I" is the question a sidebar exists to answer. The AI accent
+   survives as a tint and a sparkle - still visibly the AI, no longer shouting over
+   the one piece of state the navigation has to communicate.
+   ========================================================================== */
+.navlink.is-on {
+    /* The solid gradient, which used to belong to the AI link. Nothing else in the
+       sidebar is allowed to look like this. */
+    background-image: var(--brand-grad);
+    background-color: transparent;
+    color: #fff;
+    font-weight: 700;
+    box-shadow: var(--sh-brand);
+}
+
+/* Small red marker on the left edge of the active link */
+.navlink.is-on::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 22px;
+    border-radius: var(--r-pill);
+    background: var(--brand);
+}
+
+/* ==========================================================================
+   THE AI LINKS
+
+   Marked, not shouting. A tint, a brand-coloured label and a sparkle on the right
+   - enough that "there is an assistant in here" is obvious at a glance, and not
+   enough to be mistaken for the selected page.
+
+   The sparkle is a pseudo-element rather than markup so no JavaScript has to know
+   about it, and it is dropped when the link is selected: at that point the item is
+   solid brand and a brand-coloured star on it would be invisible anyway.
+   ========================================================================== */
+.navlink-ai {
+    margin-top: var(--sp-1);
+    background: var(--brand-soft);
+    color: var(--brand-text);
+    border: 1px solid var(--brand-border);
+}
+
+.navlink-ai:hover {
+    background: var(--brand-soft-2);
+    color: var(--brand-text);
+}
+
+/* The sparkle. Sits after the label, in the brand colour, small. */
+.navlink-ai::after {
+    content: "";
+    flex: 0 0 auto;
+
+    width: 13px;
+    height: 13px;
+    margin-left: auto;
+
+    background-color: currentColor;
+
+    /* The same shape as UI.icon('sparkles'), as a mask so it takes currentColor
+       and therefore flips with the link's state without a second rule. */
+    -webkit-mask: var(--spark-mask) center / contain no-repeat;
+    mask: var(--spark-mask) center / contain no-repeat;
+
+    opacity: .9;
+}
+
+/* SELECTED WINS. No special case, no gradient of its own, and the left-edge
+   marker is NOT hidden any more - it was, which is why an active Messages tab
+   looked exactly like an inactive one. */
+.navlink-ai.is-on {
+    color: #fff;
+    border-color: transparent;
+}
+
+/* A badge and a sparkle would collide, and the badge is the more useful of the
+   two on a link that has one. */
+.navlink-ai:has(.navlink-badge)::after {
+    display: none;
+}
+
+/* Small "demo mode" box at the bottom of the sidebar */
+.sidebar-promo {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-4);
+    border-radius: var(--r-md);
+    background-image: var(--brand-grad-soft);
+    border: 1px solid var(--brand-border);
+    min-width: 0;
+}
+
+.sidebar-foot {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-3);
+    border-top: 1px solid var(--divider);
+}
+
+/* The dark layer behind the open drawer. Tap it to close. */
+.scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 399;
+    background: var(--scrim);
+    animation: fadeIn var(--normal) var(--ease) both;
+}
+
+/* ==========================================================================
+   MAIN COLUMN (topbar + page)
+   ========================================================================== */
+.main {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* min-width:0 lets this column shrink; without it long content
+       would push the layout wider than the screen. */
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   TOPBAR
+   -------------------------------------------------------------------------- */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: var(--topbar-h);
+    padding: var(--sp-2) var(--gutter);
+    /* Frosted glass effect over the scrolling content */
+    background: var(--surface-glass);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+    min-width: 0;
+}
+
+/* Page name + subtitle. Hidden on phones (not enough room). */
+.topbar-titles {
+    display: none;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.topbar-title {
+    font-size: var(--fs-md);
+    font-weight: 700;
+    color: var(--text-strong);
+    letter-spacing: -0.02em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.topbar-sub {
+    font-size: 10px;
+    color: var(--text-subtle);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Search box, only shown from laptop up */
+.topbar-search {
+    display: none;
+    flex: 1 1 260px;
+    max-width: 400px;
+    min-width: 0;
+}
+
+/* Empty flexible space that pushes the action buttons to the right */
+.topbar-spacer {
+    flex: 1 1 auto;
+    min-width: var(--sp-2);
+}
+
+.topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    flex-shrink: 0;
+}
+
+/* --- Hamburger button (phones only) --- */
+.burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--r-md);
+    color: var(--text-strong);
+}
+
+.burger:hover {
+    background: var(--surface-3);
+}
+
+.burger div {
+    position: relative;
+    width: 20px;
+    height: 14px;
+}
+
+.burger span {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    border-radius: var(--r-pill);
+    background: currentColor;
+    transition: transform var(--normal) var(--ease), opacity var(--fast) var(--ease);
+}
+
+.burger span:nth-child(1) {
+    top: 0;
+}
+
+.burger span:nth-child(2) {
+    top: 6px;
+    width: 76%;
+}
+
+.burger span:nth-child(3) {
+    top: 12px;
+}
+
+/* Turn the three lines into an X while the drawer is open */
+.burger.is-open span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+}
+
+.burger.is-open span:nth-child(2) {
+    opacity: 0;
+}
+
+.burger.is-open span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
+}
+
+/* --- Active customer switcher (FR only) --- */
+.ctx-switch {
+    display: none;
+    /* shown from tablet up */
+    align-items: center;
+    gap: var(--sp-2);
+    max-width: 250px;
+    min-width: 0;
+    padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-1);
+    border-radius: var(--r-pill);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    transition: all var(--normal) var(--ease);
+}
+
+.ctx-switch:hover {
+    border-color: var(--brand-border);
+    background: var(--brand-soft);
+}
+
+.ctx-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.15;
+    min-width: 0;
+}
+
+.ctx-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-subtle);
+}
+
+.ctx-name {
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    color: var(--text-strong);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   PAGE AREA
+   -------------------------------------------------------------------------- */
+.page {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    padding: var(--gutter);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+}
+
+.page-inner {
+    width: 100%;
+    max-width: var(--content-max);
+    margin: 0 auto;
+    /* centres the content on very wide screens */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+}
+
+.page-wide .page-inner {
+    max-width: 1560px;
+}
+
+/* Used by PRUWise, Messages and the video call, which manage their own
+   scrolling and fill the whole area edge to edge. */
+.page-flush {
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+}
+
+/* Page title block */
+.page-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+
+.page-head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.page-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   TWO COLUMN SPLIT
+   On phones and tablets this is a single column (everything stacks).
+   From 1024px it becomes main content + a narrower side rail.
+   -------------------------------------------------------------------------- */
+.split {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--gap);
+    min-width: 0;
+}
+
+/* ==========================================================================
+   HERO BANNER (red welcome panel at the top of dashboards)
+   ========================================================================== */
+.hero {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-5);
+    padding: clamp(20px, 2.5vw, 32px);
+    border-radius: var(--r-xl);
+    background-image: var(--hero-grad);
+    color: #fff;
+    box-shadow: var(--sh-brand);
+    min-width: 0;
+}
+
+/* Soft white glow in the top-right corner. Purely decorative, so
+   pointer-events:none stops it swallowing clicks. */
+.hero::before {
+    content: "";
+    position: absolute;
+    top: -190px;
+    right: -120px;
+    width: 380px;
+    height: 380px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.22), transparent 70%);
+    pointer-events: none;
+}
+
+.hero-inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+
+.hero-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.hero-title {
+    font-size: var(--fs-2xl);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+}
+
+.hero-text {
+    font-size: var(--fs-sm);
+    color: rgba(255, 255, 255, 0.88);
+    line-height: 1.6;
+    max-width: 58ch;
+}
+
+/* Row of numbers under the hero text */
+.hero-stats {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(50% - 6px, 130px), 1fr));
+    gap: var(--sp-3);
+    padding-top: var(--sp-4);
+    border-top: 1px solid rgba(255, 255, 255, 0.22);
+    min-width: 0;
+}
+
+.hero-stat-value {
+    font-size: var(--fs-lg);
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+
+.hero-stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+/* ==========================================================================
+   FLOATING "ASK PRUWISE" BUTTON
+
+   This is the only floating element in the layout. There is deliberately NO
+   bottom tab bar: a tab bar makes a site feel like a phone app, and this is a
+   website. On phones the hamburger drawer is the navigation.
+   ========================================================================== */
+.ai-fab {
+    position: fixed;
+    right: var(--sp-4);
+    bottom: var(--sp-4);
+    z-index: 150;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    height: 50px;
+    padding: 0 var(--sp-5);
+    border-radius: var(--r-pill);
+    background-image: var(--brand-grad);
+    color: #fff;
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    box-shadow: var(--sh-brand);
+    transition: transform var(--normal) var(--bounce);
+}
+
+.ai-fab:hover {
+    transform: translateY(-2px) scale(1.02);
+}
+
+/* ==========================================================================
+   TABLET  (768px and up) — icon rail, no bottom bar
+   ========================================================================== */
+@media (min-width: 768px) {
+
+    /* Make room for the fixed rail so content is never hidden behind it */
+    .shell {
+        padding-left: var(--rail-w);
+    }
+
+    .sidebar {
+        transform: none;
+        /* always visible now */
+        width: var(--rail-w);
+        box-shadow: none;
+        overflow: hidden;
+    }
+
+    .sidebar-head {
+        justify-content: center;
+        padding: var(--sp-3);
+    }
+
+    .sidebar-nav {
+        padding: var(--sp-3) var(--sp-2);
+        overflow-x: hidden;
+    }
+
+    /* Hide anything that needs width */
+    .nav-group-label,
+    .navlink-label,
+    .sidebar-promo,
+    .sidebar-close,
+    .sidebar-brand .logo-text,
+    .sidebar-brand .logo-rule,
+    .sidebar-foot .person-text {
+        display: none;
+    }
+
+    .navlink {
+        justify-content: center;
+        padding: var(--sp-3) 0;
+    }
+
+    /* Move the count badge to the corner of the icon */
+    .navlink-badge {
+        position: absolute;
+        top: 3px;
+        right: 9px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        font-size: 9px;
+        border: 1.5px solid var(--surface);
+    }
+
+    .navlink.is-on::before {
+        left: -8px;
+        height: 20px;
+    }
+
+    .sidebar-foot .person {
+        justify-content: center;
+    }
+
+    /* The rail is always visible, so the drawer controls are not needed */
+    .burger,
+    .scrim {
+        display: none !important;
+    }
+
+    .topbar-titles {
+        display: flex;
+    }
+
+    .ctx-switch {
+        display: flex;
+    }
+
+    .ai-fab {
+        bottom: var(--sp-5);
+    }
+
+    /* Hovering the rail expands it, so you can read the labels without
+       leaving the page. The content underneath does not move. */
+    .sidebar:hover {
+        width: var(--sidebar-w);
+        box-shadow: var(--sh-xl);
+    }
+
+    .sidebar:hover .navlink {
+        justify-content: flex-start;
+        padding: var(--sp-3);
+    }
+
+    .sidebar:hover .nav-group-label,
+    .sidebar:hover .navlink-label {
+        display: block;
+    }
+
+    .sidebar:hover .sidebar-brand .logo-text,
+    .sidebar:hover .sidebar-promo,
+    .sidebar:hover .sidebar-foot .person-text {
+        display: flex;
+    }
+
+    /* The thin rule between the logo and the PRUWise wordmark */
+    .sidebar:hover .sidebar-brand .logo-rule {
+        display: block;
+    }
+
+    .sidebar:hover .sidebar-head,
+    .sidebar:hover .sidebar-foot .person {
+        justify-content: flex-start;
+    }
+
+    .sidebar:hover .navlink-badge {
+        position: static;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        font-size: 10px;
+        border: none;
+    }
+}
+
+/* ==========================================================================
+   LAPTOP  (1024px and up) — full sidebar, two-column pages
+   ========================================================================== */
+@media (min-width: 1024px) {
+    .shell {
+        padding-left: var(--sidebar-w);
+    }
+
+    /* Note we also target .sidebar:hover to cancel the tablet hover rule */
+    .sidebar,
+    .sidebar:hover {
+        width: var(--sidebar-w);
+        box-shadow: none;
+        overflow: visible;
+    }
+
+    .sidebar-head {
+        justify-content: flex-start;
+        padding: var(--sp-4);
+    }
+
+    .sidebar-nav {
+        padding: var(--sp-4) var(--sp-3);
+        overflow-y: auto;
+    }
+
+    .nav-group-label,
+    .navlink-label {
+        display: block;
+    }
+
+    .sidebar-promo,
+    .sidebar-brand .logo-text,
+    .sidebar-foot .person-text {
+        display: flex;
+    }
+
+    .sidebar-brand .logo-rule {
+        display: block;
+    }
+
+    .navlink,
+    .sidebar:hover .navlink {
+        justify-content: flex-start;
+        padding: var(--sp-3);
+    }
+
+    .navlink-badge {
+        position: static;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        font-size: 10px;
+        border: none;
+    }
+
+    .navlink.is-on::before {
+        left: -12px;
+    }
+
+    .sidebar-foot .person {
+        justify-content: flex-start;
+    }
+
+    .topbar-search {
+        display: flex;
+    }
+
+    /* Main content + side rail.
+       minmax(0, ...) is essential: it allows the columns to shrink.
+       Without the 0 minimum, wide content (like a table) makes the grid
+       overflow the screen. */
+    .split-rail {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+        align-items: start;
+    }
+
+    .split-even {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* ==========================================================================
+   DESKTOP  (1440px and up)
+   ========================================================================== */
+@media (min-width: 1440px) {
+    .split-rail {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+    }
+}
+
+/* Very wide screens: stop the shell stretching forever, centre it instead */
+@media (min-width: 1800px) {
+    .shell {
+        max-width: calc(1560px + var(--sidebar-w));
+        margin: 0 auto;
+    }
+}
+
+/* ==========================================================================
+   SHORT SCREENS (landscape phones)
+   Trim the vertical rhythm so content still fits without endless scrolling.
+   ========================================================================== */
+@media (max-height: 480px) and (max-width: 900px) {
+    .hero {
+        padding: var(--sp-4);
+    }
+
+    .page {
+        gap: var(--sp-4);
+    }
+}

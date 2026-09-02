@@ -1,0 +1,525 @@
+/* ==========================================================================
+   base.css
+   --------------------------------------------------------------------------
+   Page defaults + small helper classes we reuse constantly:
+   text sizes, stacks, rows, grids, and show/hide-by-screen-size helpers.
+
+   Think of this file as our mini utility toolkit. Using these classes keeps
+   the JavaScript templates short and readable.
+   ========================================================================== */
+
+body {
+    font-family: var(--font);
+    font-size: var(--fs-md);
+    line-height: 1.55;
+    letter-spacing: -0.011em;
+    color: var(--text);
+    background-color: var(--bg);
+    background-image: var(--bg-glow);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    min-height: 100dvh;
+    /* dvh = "dynamic viewport height". On phones this accounts for the
+       address bar appearing/disappearing, unlike the older 100vh. */
+    transition: background-color var(--slow) var(--ease), color var(--slow) var(--ease);
+}
+
+/* When the theme switches we briefly turn OFF transitions, otherwise every
+   element on the page slowly fades and it looks like a smear.
+   app.js adds this class for ~60ms during the switch. */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+    transition: none !important;
+}
+
+::selection {
+    background: var(--brand);
+    color: var(--on-brand);
+}
+
+/* --------------------------------------------------------------------------
+   HEADINGS + TEXT
+   -------------------------------------------------------------------------- */
+.h1,
+.h2,
+.h3,
+.h4,
+.h5 {
+    color: var(--text-strong);
+    letter-spacing: -0.02em;
+    font-weight: 700;
+}
+
+.h1 {
+    font-size: var(--fs-3xl);
+    line-height: 1.12;
+    font-weight: 800;
+}
+
+.h2 {
+    font-size: var(--fs-2xl);
+    line-height: 1.15;
+}
+
+.h3 {
+    font-size: var(--fs-xl);
+    line-height: 1.25;
+}
+
+.h4 {
+    font-size: var(--fs-lg);
+    line-height: 1.3;
+}
+
+.h5 {
+    font-size: var(--fs-md);
+    font-weight: 600;
+}
+
+/* Small uppercase label, e.g. "ACTIVE CUSTOMER" */
+.eyebrow {
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+}
+
+.lead {
+    font-size: var(--fs-md);
+    color: var(--text-muted);
+    line-height: 1.65;
+}
+
+.t-sm {
+    font-size: var(--fs-sm);
+}
+
+.t-xs {
+    font-size: var(--fs-xs);
+}
+
+.muted {
+    color: var(--text-muted);
+}
+
+.subtle {
+    color: var(--text-subtle);
+}
+
+.t-brand {
+    color: var(--brand-text);
+}
+
+.t-ok {
+    color: var(--ok);
+}
+
+.t-warn {
+    color: var(--warn);
+}
+
+.t-bad {
+    color: var(--bad);
+}
+
+.bold {
+    font-weight: 700;
+}
+
+.semi {
+    font-weight: 600;
+}
+
+.center {
+    text-align: center;
+}
+
+.right {
+    text-align: right;
+}
+
+/* Numbers line up in columns (useful in tables of money amounts) */
+.num {
+    font-variant-numeric: tabular-nums;
+}
+
+/* One line only, with "..." if it does not fit.
+   min-width:0 is the magic bit - without it, truncation fails inside flexbox. */
+.truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* Limit to 2 or 3 lines then cut off */
+.clamp-2,
+.clamp-3 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.clamp-2 {
+    -webkit-line-clamp: 2;
+}
+
+.clamp-3 {
+    -webkit-line-clamp: 3;
+}
+
+.link {
+    color: var(--brand-text);
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+/* --------------------------------------------------------------------------
+   STACKS + ROWS
+   "stack" = children sit vertically with a gap between them.
+   "row"   = children sit horizontally, vertically centred.
+   These two classes replace hundreds of one-off margin rules.
+   -------------------------------------------------------------------------- */
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    min-width: 0;
+}
+
+.stack-2 {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    min-width: 0;
+}
+
+.stack-3 {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+
+.stack-4 {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+    min-width: 0;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+
+.row-2 {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-width: 0;
+}
+
+/* Wraps onto a second line when there is not enough width - this is what
+   stops button groups overflowing on small screens. */
+.wrap {
+    flex-wrap: wrap;
+}
+
+/* Pushes the last child to the far right, and wraps on small screens */
+.between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.top {
+    align-items: flex-start;
+}
+
+.grow {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.no-shrink {
+    flex-shrink: 0;
+}
+
+.push {
+    margin-left: auto;
+}
+
+.full {
+    width: 100%;
+}
+
+/* Every direct child of a flex/grid container gets overflow protection.
+   This one rule prevents the majority of horizontal-scroll bugs. */
+.stack > *,
+.stack-2 > *,
+.stack-3 > *,
+.stack-4 > *,
+.row > *,
+.row-2 > *,
+.between > *,
+.grid > * {
+    min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   GRIDS
+   auto-fit + minmax = "fit as many columns as you can, each at least X wide,
+   otherwise use fewer columns". This gives us responsive card grids with
+   NO media queries at all.
+
+   The min(100%, 260px) part is important: on a 320px phone the column is
+   allowed to be 100% wide instead of forcing 260px + padding = overflow.
+   -------------------------------------------------------------------------- */
+.grid {
+    display: grid;
+    gap: var(--gap);
+    min-width: 0;
+}
+
+.grid-sm {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.grid-md {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+.grid-lg {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+}
+
+/* --------------------------------------------------------------------------
+   SHOW / HIDE BY SCREEN SIZE
+   We use these instead of building two separate pages.
+   Breakpoints used across the whole project:
+     phone  = up to 767px
+     tablet = 768px and up
+     laptop = 1024px and up
+   -------------------------------------------------------------------------- */
+
+/* NOTE ON !important
+   These helpers are applied to elements that already have their own display
+   value from components.css (a .btn is inline-flex, a .segmented is
+   inline-flex, and so on). components.css loads after this file, so without
+   !important the component's display would win and the element would never
+   hide. Using !important here keeps the show/hide behaviour predictable
+   wherever the class is used. */
+
+/* Visible only on phones */
+.phone-only {
+    display: block;
+}
+
+@media (min-width: 768px) {
+    .phone-only {
+        display: none !important;
+    }
+}
+
+/* Visible from tablet up */
+.tablet-up {
+    display: none !important;
+}
+
+@media (min-width: 768px) {
+    .tablet-up {
+        display: block !important;
+    }
+}
+
+/* Visible from laptop up */
+.laptop-up {
+    display: none !important;
+}
+
+@media (min-width: 1024px) {
+    .laptop-up {
+        display: block !important;
+    }
+}
+
+/* Visible below laptop (phone + tablet) */
+.laptop-down {
+    display: inline-flex;
+}
+
+@media (min-width: 1024px) {
+    .laptop-down {
+        display: none !important;
+    }
+}
+
+/* Same as .tablet-up but keeps the element a flex container when shown,
+   so things like the segmented control still lay out correctly */
+.tablet-up-flex {
+    display: none !important;
+}
+
+@media (min-width: 768px) {
+    .tablet-up-flex {
+        display: inline-flex !important;
+    }
+}
+
+.hide {
+    display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   ACCESSIBILITY
+   -------------------------------------------------------------------------- */
+
+/* Hidden on screen, still read out by screen readers */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+
+/* "Skip to main content" - appears when a keyboard user presses Tab */
+.skip-link {
+    position: fixed;
+    top: -100px;
+    left: var(--sp-4);
+    z-index: 900;
+    background: var(--brand);
+    color: var(--on-brand);
+    padding: var(--sp-3) var(--sp-5);
+    border-radius: var(--r-sm);
+    font-weight: 600;
+    transition: top var(--normal) var(--ease);
+}
+
+.skip-link:focus-visible {
+    top: var(--sp-4);
+}
+
+/* --------------------------------------------------------------------------
+   SCROLLBARS + SCROLL AREAS
+   -------------------------------------------------------------------------- */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--r-pill);
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+/* A horizontal strip that scrolls sideways (filter chips, tab bars).
+   scrollbar hidden because the content visibly runs off the edge anyway. */
+.scroll-x {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.scroll-x::-webkit-scrollbar {
+    display: none;
+}
+
+/* --------------------------------------------------------------------------
+   ANIMATIONS
+   -------------------------------------------------------------------------- */
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.anim-up {
+    animation: fadeUp var(--slow) var(--ease) both;
+}
+
+.anim-in {
+    animation: fadeIn var(--normal) var(--ease) both;
+}
+
+/* Cards appear one after another instead of all at once.
+   ":nth-child(n)" targets the 1st, 2nd, 3rd... child. */
+.stagger > * {
+    animation: fadeUp 420ms var(--ease) both;
+}
+
+.stagger > *:nth-child(2) {
+    animation-delay: 50ms;
+}
+
+.stagger > *:nth-child(3) {
+    animation-delay: 100ms;
+}
+
+.stagger > *:nth-child(4) {
+    animation-delay: 150ms;
+}
+
+.stagger > *:nth-child(5) {
+    animation-delay: 200ms;
+}
+
+.stagger > *:nth-child(6) {
+    animation-delay: 250ms;
+}
+
+.stagger > *:nth-child(7) {
+    animation-delay: 300ms;
+}
+
+.stagger > *:nth-child(8) {
+    animation-delay: 350ms;
+}

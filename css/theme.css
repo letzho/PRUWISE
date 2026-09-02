@@ -1,0 +1,370 @@
+/* ==========================================================================
+   theme.css
+   --------------------------------------------------------------------------
+   1. A small CSS reset (makes every browser start from the same place)
+   2. All the design "tokens" - our colours, spacing, fonts, shadows
+
+   WHAT IS A TOKEN?
+   A token is just a named value, e.g. --brand: #E4002B.
+   Everywhere else in the CSS we write  color: var(--brand)  instead of the
+   raw colour. So if you want a different red, you change ONE line here and
+   the whole website updates.
+
+   LIGHT + DARK MODE
+   The <html> tag gets data-theme="light" or data-theme="dark".
+   We simply list a different set of colours for each. Nothing else in the
+   project needs to know which theme is active.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. RESET
+   -------------------------------------------------------------------------- */
+
+/* border-box means padding does not make an element wider than you asked for.
+   This single rule prevents most "why is my layout too wide?" problems. */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* Remove the default margins the browser adds to headings, paragraphs, lists */
+* {
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    /* overflow-x: hidden is our safety net: nothing can ever cause the page
+       to scroll sideways on a phone. */
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+img,
+svg,
+video {
+    display: block;
+    max-width: 100%;
+    /* max-width:100% = images shrink to fit their container instead of
+       pushing the layout wider. */
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+    /* inherit = use the same font as the rest of the page */
+    color: inherit;
+    background: none;
+    border: none;
+}
+
+button {
+    cursor: pointer;
+    /* Stops the grey flash when tapping buttons on mobile Safari/Chrome */
+    -webkit-tap-highlight-color: transparent;
+}
+
+ul,
+ol {
+    list-style: none;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+table {
+    border-collapse: collapse;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: 1.2;
+}
+
+/* Long words (like an email address) wrap instead of overflowing */
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    overflow-wrap: break-word;
+}
+
+/* Keyboard users must always be able to see what is focused */
+:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+/* Respect the operating system "reduce motion" accessibility setting */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        transition-duration: 0.001ms !important;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   2. TOKENS THAT NEVER CHANGE between light and dark
+   -------------------------------------------------------------------------- */
+:root {
+    /* ---- The red brand ramp (light red -> dark red) ---- */
+    --red-50: #FFF1F3;
+    --red-100: #FFE1E6;
+    --red-200: #FFC7D0;
+    --red-400: #FA5F7C;
+    --red-500: #EE1C4B;
+    --red-600: #E4002B;
+    /* the main brand red */
+    --red-700: #C10024;
+    --red-800: #9B0620;
+
+    /* ---- Fonts ----
+       We list several fonts. The browser uses the first one it can find, so
+       the site still looks right if Google Fonts fails to load. */
+    --font: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+    /* ---- Font sizes ----
+       clamp(smallest, preferred, largest) makes text grow with the screen.
+       clamp(0.875rem, 0.85rem + 0.2vw, 1rem) means:
+         never smaller than 0.875rem, never bigger than 1rem,
+         and in between it scales with the window width (vw = viewport width).
+       This is how we "resize typography appropriately" without media queries. */
+    --fs-xs: clamp(0.70rem, 0.67rem + 0.15vw, 0.75rem);
+    --fs-sm: clamp(0.78rem, 0.75rem + 0.18vw, 0.875rem);
+    --fs-md: clamp(0.875rem, 0.85rem + 0.2vw, 1rem);
+    --fs-lg: clamp(1.05rem, 0.99rem + 0.35vw, 1.25rem);
+    --fs-xl: clamp(1.2rem, 1.09rem + 0.55vw, 1.5rem);
+    --fs-2xl: clamp(1.4rem, 1.2rem + 0.9vw, 1.9rem);
+    --fs-3xl: clamp(1.7rem, 1.35rem + 1.6vw, 2.5rem);
+
+    /* ---- Spacing (all multiples of 4px, so everything lines up) ---- */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-8: 32px;
+    --sp-10: 40px;
+
+    /* Page padding: 16px on a phone, up to 32px on a big screen */
+    --gutter: clamp(16px, 12px + 1.5vw, 32px);
+    /* Standard gap between stacked blocks */
+    --gap: clamp(16px, 14px + 0.8vw, 24px);
+
+    /* ---- Rounded corners ---- */
+    --r-sm: 10px;
+    --r-md: 14px;
+    --r-lg: 18px;
+    --r-xl: 24px;
+    --r-pill: 999px;
+    /* fully rounded, for pill buttons */
+
+    /* ---- Animation speeds and easing ---- */
+    --fast: 120ms;
+    --normal: 200ms;
+    --slow: 340ms;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --bounce: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+    /* ---- Fixed sizes used by the app shell ---- */
+    --sidebar-w: 260px;
+    /* full sidebar on desktop */
+    --rail-w: 76px;
+    /* narrow icon-only sidebar on tablet */
+    --topbar-h: 64px;
+    --content-max: 1280px;
+    /* stops text lines getting silly wide */
+}
+
+/* --------------------------------------------------------------------------
+   3. LIGHT THEME COLOURS  (the default)
+   -------------------------------------------------------------------------- */
+:root,
+[data-theme="light"] {
+    color-scheme: light;
+    /* tells the browser to use light scrollbars etc. */
+
+    /* Backgrounds */
+    --bg: #F4F5F8;
+    /* the page behind everything */
+    --surface: #FFFFFF;
+    /* cards */
+    --surface-2: #FAFAFC;
+    /* slightly tinted card */
+    --surface-3: #F1F2F6;
+    /* hover backgrounds, tracks */
+    --surface-glass: rgba(255, 255, 255, 0.8);
+    /* frosted topbar */
+
+    /* A very subtle red glow in the top-right of the page */
+    --bg-glow: radial-gradient(1100px 600px at 88% -10%, rgba(228, 0, 43, 0.10), transparent 60%);
+
+    /* Text */
+    --text: #14161C;
+    --text-strong: #05070C;
+    --text-muted: #5A6274;
+    /* secondary text */
+    --text-subtle: #838B9C;
+    /* labels, captions */
+
+    /* Lines */
+    --border: #E4E7EE;
+    --border-strong: #D2D7E2;
+    --divider: #E9EBF1;
+
+    /* Brand */
+    --brand: var(--red-600);
+    --brand-hover: var(--red-700);
+    --brand-text: var(--red-700);
+    /* red text that still passes contrast */
+    --brand-soft: var(--red-50);
+    /* pale red background */
+    --brand-soft-2: var(--red-100);
+    --brand-border: var(--red-200);
+    --on-brand: #FFFFFF;
+    /* text on top of red */
+
+    /* Gradients (used on buttons, hero banners, avatars) */
+    --brand-grad: linear-gradient(135deg, #EE1C4B 0%, #E4002B 46%, #B60022 100%);
+    --brand-grad-soft: linear-gradient(135deg, #FFF4F6 0%, #FFE7EC 100%);
+    --hero-grad: linear-gradient(135deg, #F0224F 0%, #D9002A 52%, #96001D 100%);
+
+    /* Status colours */
+    --ok: #128A4E;
+    --ok-soft: #E4F6EB;
+    --warn: #B36A00;
+    --warn-soft: #FDF2DE;
+    --bad: #C81E28;
+    --bad-soft: #FDECEC;
+    --info: #2563EB;
+    --info-soft: #E8F0FE;
+    --neutral-soft: #EFF1F5;
+
+    /* Chart colours */
+    --c1: #E4002B;
+    --c2: #6D48D7;
+    --c3: #0E9A8A;
+    --c4: #D98207;
+    --c5: #2563EB;
+    --chart-grid: #E7EAF1;
+    --chart-axis: #98A0B2;
+
+    /* Shadows: small, medium, large, and a red-tinted one for buttons */
+    --sh-sm: 0 1px 3px rgba(16, 20, 32, 0.06), 0 1px 2px rgba(16, 20, 32, 0.04);
+    --sh-md: 0 4px 14px rgba(16, 20, 32, 0.07), 0 1px 3px rgba(16, 20, 32, 0.05);
+    --sh-lg: 0 14px 34px rgba(16, 20, 32, 0.10), 0 3px 8px rgba(16, 20, 32, 0.05);
+    --sh-xl: 0 26px 60px rgba(16, 20, 32, 0.14);
+    --sh-brand: 0 8px 22px rgba(228, 0, 43, 0.26);
+
+    /* ---- The sparkle, as a mask ----
+
+       The same geometry as UI.icon('sparkles') in js/ui.js, inlined as a data URL
+       so it can be used as a CSS mask. A mask takes its colour from
+       background-color, which means one declaration works in both themes and in
+       both states of a link rather than needing a rule per case.
+
+       Defined once here rather than repeated: it is used on the sidebar's AI links
+       and is the sort of thing that would otherwise be pasted in three places and
+       then edited in one. */
+    --spark-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M11.2 3.3a.55.55 0 0 1 1.04 0l1.36 3.62a.55.55 0 0 0 .32.32l3.62 1.36a.55.55 0 0 1 0 1.04l-3.62 1.36a.55.55 0 0 0-.32.32l-1.36 3.62a.55.55 0 0 1-1.04 0L9.88 11.3a.55.55 0 0 0-.32-.32L5.94 9.62a.55.55 0 0 1 0-1.04L9.56 7.2a.55.55 0 0 0 .32-.32z'/><path d='M18.4 14.6l.62 1.66 1.66.62-1.66.62-.62 1.66-.62-1.66-1.66-.62 1.66-.62z'/></svg>");
+
+    --ring: 0 0 0 3px rgba(228, 0, 43, 0.16);
+    /* glow around focused inputs */
+    --focus-ring: var(--red-600);
+    --scrim: rgba(11, 14, 22, 0.45);
+    /* dark layer behind modals */
+    --skeleton: linear-gradient(90deg, #EDEFF4 25%, #F6F7FA 50%, #EDEFF4 75%);
+}
+
+/* --------------------------------------------------------------------------
+   4. DARK THEME COLOURS
+   Same token names, different values. That is the whole trick.
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg: #0B0C10;
+    --surface: #14161D;
+    --surface-2: #191C24;
+    --surface-3: #21252F;
+    --surface-glass: rgba(20, 22, 29, 0.82);
+    --bg-glow: radial-gradient(1100px 600px at 88% -10%, rgba(238, 28, 75, 0.20), transparent 60%);
+
+    --text: #ECEEF4;
+    --text-strong: #FFFFFF;
+    --text-muted: #A2AABC;
+    --text-subtle: #7B8497;
+
+    --border: #272B36;
+    --border-strong: #363C4A;
+    --divider: #242833;
+
+    /* A slightly brighter red, because deep red on black is hard to read */
+    --brand: #FF2B52;
+    --brand-hover: #FF4767;
+    --brand-text: #FF8098;
+    --brand-soft: rgba(255, 43, 82, 0.14);
+    --brand-soft-2: rgba(255, 43, 82, 0.22);
+    --brand-border: rgba(255, 43, 82, 0.34);
+    --on-brand: #FFFFFF;
+
+    --brand-grad: linear-gradient(135deg, #FF3559 0%, #DE0129 52%, #8E0620 100%);
+    --brand-grad-soft: linear-gradient(135deg, rgba(255, 43, 82, 0.16) 0%, rgba(255, 43, 82, 0.05) 100%);
+    --hero-grad: linear-gradient(135deg, #E01034 0%, #A80526 55%, #5E0416 100%);
+
+    --ok: #34C77B;
+    --ok-soft: rgba(36, 171, 102, 0.16);
+    --warn: #F0A428;
+    --warn-soft: rgba(240, 164, 40, 0.16);
+    --bad: #FF6B73;
+    --bad-soft: rgba(255, 90, 99, 0.16);
+    --info: #6C9BFA;
+    --info-soft: rgba(78, 134, 247, 0.18);
+    --neutral-soft: rgba(255, 255, 255, 0.07);
+
+    --c1: #FF3E62;
+    --c2: #8A6BE8;
+    --c3: #22B8A6;
+    --c4: #F0A428;
+    --c5: #4E86F7;
+    --chart-grid: #262B36;
+    --chart-axis: #6E7788;
+
+    --sh-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --sh-md: 0 6px 18px rgba(0, 0, 0, 0.48);
+    --sh-lg: 0 16px 38px rgba(0, 0, 0, 0.56);
+    --sh-xl: 0 28px 64px rgba(0, 0, 0, 0.66);
+    --sh-brand: 0 8px 22px rgba(228, 0, 43, 0.4);
+
+    --ring: 0 0 0 3px rgba(255, 43, 82, 0.26);
+    --focus-ring: #FF5C78;
+    --scrim: rgba(0, 0, 0, 0.68);
+    --skeleton: linear-gradient(90deg, #1C2028 25%, #262B35 50%, #1C2028 75%);
+}
