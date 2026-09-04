@@ -40,14 +40,14 @@
            pages      login, AI Navigator, simulation, video call
          =================================================================== -->
     <!-- ===================================================================
-         ?v=31  - THE CACHE BUSTER. BUMP IT EVERY TIME YOU UPLOAD.
+         ?v=32  - THE CACHE BUSTER. BUMP IT EVERY TIME YOU UPLOAD.
 
          A browser is allowed to reuse a file it already has, and it decides
          that by URL. "css/pages.css" is the same URL today as yesterday, so
          after an upload the browser keeps serving itself the OLD copy and the
          fix appears not to have worked.
 
-         Adding ?v=31 changes the URL, so it counts as a file the browser has
+         Adding ?v=32 changes the URL, so it counts as a file the browser has
          never seen and must fetch.
 
          THIS HAS ALREADY COST US TWICE. A misspelt formatter was fixed in
@@ -61,11 +61,11 @@
          top of js/app.js. php/setup.php checks both and complains if not, so a
          half-done bump is caught before it is uploaded rather than after.
          =================================================================== -->
-    <link rel="stylesheet" href="css/theme.css?v=31">
-    <link rel="stylesheet" href="css/base.css?v=31">
-    <link rel="stylesheet" href="css/components.css?v=31">
-    <link rel="stylesheet" href="css/layout.css?v=31">
-    <link rel="stylesheet" href="css/pages.css?v=31">
+    <link rel="stylesheet" href="css/theme.css?v=32">
+    <link rel="stylesheet" href="css/base.css?v=32">
+    <link rel="stylesheet" href="css/components.css?v=32">
+    <link rel="stylesheet" href="css/layout.css?v=32">
+    <link rel="stylesheet" href="css/pages.css?v=32">
 </head>
 
 <body>
@@ -130,30 +130,30 @@
          There is no pages-pruwise.js any more. PRUWise is a conversation in
          messages.js, not a separate screen - see the notes at the top of it.
          =================================================================== -->
-    <!-- ?v=31 - see the long note above the stylesheets. Bump on every upload,
+    <!-- ?v=32 - see the long note above the stylesheets. Bump on every upload,
          keep every number here identical, and keep APP_BUILD in js/app.js the
          same. jQuery gets one too: it never changes, but leaving it off would
          make the list look inconsistent and invite somebody to "tidy" the
          others away. -->
-    <script src="js/vendor/jquery-3.7.1.min.js?v=31"></script>
-    <script src="js/data.js?v=31"></script>
-    <script src="js/charts.js?v=31"></script>
-    <script src="js/ui.js?v=31"></script>
-    <script src="js/ai.js?v=31"></script>
-    <script src="js/api.js?v=31"></script>
-    <script src="js/app.js?v=31"></script>
-    <script src="js/call.js?v=31"></script>
-    <script src="js/messages.js?v=31"></script>
-    <script src="js/pages-calendar.js?v=31"></script>
-    <script src="js/pages-fr.js?v=31"></script>
+    <script src="js/vendor/jquery-3.7.1.min.js?v=32"></script>
+    <script src="js/data.js?v=32"></script>
+    <script src="js/charts.js?v=32"></script>
+    <script src="js/ui.js?v=32"></script>
+    <script src="js/ai.js?v=32"></script>
+    <script src="js/api.js?v=32"></script>
+    <script src="js/app.js?v=32"></script>
+    <script src="js/call.js?v=32"></script>
+    <script src="js/messages.js?v=32"></script>
+    <script src="js/pages-calendar.js?v=32"></script>
+    <script src="js/pages-fr.js?v=32"></script>
 
     <!-- Live transcribe for an in-person meeting. AFTER pages-fr.js, because it
          calls frBook() from there to fill its client picker. -->
-    <script src="js/pages-inperson.js?v=31"></script>
-    <script src="js/pages-me.js?v=31"></script>
-    <script src="js/pages-onboarding.js?v=31"></script>
-    <script src="js/pages-admin.js?v=31"></script>
-    <script src="js/pages-settings.js?v=31"></script>
+    <script src="js/pages-inperson.js?v=32"></script>
+    <script src="js/pages-me.js?v=32"></script>
+    <script src="js/pages-onboarding.js?v=32"></script>
+    <script src="js/pages-admin.js?v=32"></script>
+    <script src="js/pages-settings.js?v=32"></script>
 </body>
 
 </html>

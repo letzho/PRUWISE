@@ -839,27 +839,35 @@ var CALL = (function () {
 
     /* Attach local mic/camera. Always returns a Promise so createAnswer waits.
 
-       ANSWERER must use addTrack AFTER setRemoteDescription(offer). That binds
-       to the offer m-lines and upgrades recvonly → sendrecv. Non-awaited
-       replaceTrack before createAnswer was the regression that left the agent
-       without client video while the client still saw the agent. */
+       ANSWERER: after setRemoteDescription(offer), set each offer transceiver to
+       sendrecv and replaceTrack. Never addTrack/addTransceiver here - those can
+       create EXTRA m-lines while the real offer line stays recvonly, which shows
+       up on the agent as currentDirection:"sendonly" (exactly the reported bug).
+
+       OFFERER: addTrack / addTransceiver(sendrecv) before createOffer. */
+    function liveTrack(kind) {
+        if (!localStream) { return null; }
+        var list = kind === 'video'
+            ? localStream.getVideoTracks()
+            : localStream.getAudioTracks();
+        var track = list.filter(function (t) { return t.readyState === 'live'; })[0] || null;
+        if (track) { track.enabled = true; }
+        return track;
+    }
+
+    function forceSendrecv() {
+        if (!pc) { return; }
+        pc.getTransceivers().forEach(function (t) {
+            if (t.stopped) { return; }
+            try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+        });
+    }
+
     function attachLocalTracks(role) {
         if (!pc) { return Promise.resolve(); }
 
-        var audioTrack = null;
-        var videoTrack = null;
-
-        if (localStream) {
-            audioTrack = localStream.getAudioTracks().filter(function (t) {
-                return t.readyState === 'live';
-            })[0] || null;
-            videoTrack = localStream.getVideoTracks().filter(function (t) {
-                return t.readyState === 'live';
-            })[0] || null;
-        }
-
-        if (audioTrack) { audioTrack.enabled = true; }
-        if (videoTrack) { videoTrack.enabled = true; }
+        var audioTrack = liveTrack('audio');
+        var videoTrack = liveTrack('video');
 
         console.log('🎙️ attachLocalTracks[' + role + ']', {
             audio: audioTrack ? audioTrack.readyState : null,
@@ -870,48 +878,28 @@ var CALL = (function () {
         if (role === 'answerer') {
             var jobs = [];
 
-            if (localStream) {
-                [audioTrack, videoTrack].forEach(function (track) {
-                    if (!track) { return; }
-
-                    var existing = pc.getSenders().find(function (s) {
-                        return s.track === track
-                            || (s.track && s.track.kind === track.kind);
-                    });
-
-                    if (existing && existing.track === track) {
-                        if (track.kind === 'audio') { audioSenderRef = existing; }
-                        if (track.kind === 'video') { videoSenderRef = existing; }
-                        return;
-                    }
-
-                    if (existing && !existing.track) {
-                        /* Offer created a null sender on this m-line - attach to it. */
-                        jobs.push(Promise.resolve(existing.replaceTrack(track)));
-                        if (track.kind === 'audio') { audioSenderRef = existing; }
-                        if (track.kind === 'video') { videoSenderRef = existing; }
-                        return;
-                    }
-
-                    if (existing && existing.track && existing.track !== track) {
-                        jobs.push(Promise.resolve(existing.replaceTrack(track)));
-                        if (track.kind === 'audio') { audioSenderRef = existing; }
-                        if (track.kind === 'video') { videoSenderRef = existing; }
-                        return;
-                    }
-
-                    /* Preferred path: addTrack reuses the offer transceiver and
-                       upgrades direction to sendrecv before createAnswer. */
-                    var sender = pc.addTrack(track, localStream);
-                    if (track.kind === 'audio') { audioSenderRef = sender; }
-                    if (track.kind === 'video') { videoSenderRef = sender; }
-                });
-            }
-
             pc.getTransceivers().forEach(function (t) {
                 if (t.stopped) { return; }
-                if (t.direction === 'recvonly' || t.direction === 'inactive') {
-                    try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+
+                var kind = t.receiver && t.receiver.track && t.receiver.track.kind;
+                if (kind !== 'audio' && kind !== 'video') { return; }
+
+                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+
+                var track = kind === 'audio' ? audioTrack : videoTrack;
+                if (!track) { return; }
+
+                if (kind === 'audio') { audioSenderRef = t.sender; }
+                if (kind === 'video') { videoSenderRef = t.sender; }
+
+                if (t.sender.track !== track) {
+                    jobs.push(Promise.resolve(t.sender.replaceTrack(track)));
+                }
+
+                /* Helps some browsers associate the outbound track with a stream
+                   so the remote ontrack gets event.streams populated. */
+                if (typeof t.sender.setStreams === 'function' && localStream) {
+                    try { t.sender.setStreams(localStream); } catch (e) { /* ignore */ }
                 }
             });
 
@@ -929,6 +917,8 @@ var CALL = (function () {
         }
 
         /* ---- offerer ---- */
+        forceSendrecv();
+
         if (localStream) {
             localStream.getTracks().forEach(function (track) {
                 if (track.readyState !== 'live') { return; }
@@ -966,17 +956,31 @@ var CALL = (function () {
         if (!haveAudio) {
             audioSenderRef = pc.addTransceiver(audioTrack || 'audio', {
                 direction: 'sendrecv',
-                streams: localStream ? [localStream] : []
+                streams: localStream && audioTrack ? [localStream] : []
             }).sender;
         }
         if (!haveVideo) {
             videoSenderRef = pc.addTransceiver(videoTrack || 'video', {
                 direction: 'sendrecv',
-                streams: localStream ? [localStream] : []
+                streams: localStream && videoTrack ? [localStream] : []
             }).sender;
         }
 
+        forceSendrecv();
         return Promise.resolve();
+    }
+
+    function sdpMediaDirection(sdp, kind) {
+        if (!sdp) { return null; }
+        var block = sdp.split(/^m=/m).filter(function (part) {
+            return part.indexOf(kind) === 0;
+        })[0];
+        if (!block) { return null; }
+        if (/^a=sendrecv$/m.test(block)) { return 'sendrecv'; }
+        if (/^a=sendonly$/m.test(block)) { return 'sendonly'; }
+        if (/^a=recvonly$/m.test(block)) { return 'recvonly'; }
+        if (/^a=inactive$/m.test(block)) { return 'inactive'; }
+        return null;
     }
 
     /* If the peer answered without sending video, renegotiate once.
@@ -1018,7 +1022,12 @@ var CALL = (function () {
         /* sendonly / inactive / null → client is not sending. Renegotiate
            media only - do NOT iceRestart here. iceRestart tears down the
            working ICE/TURN path and often ends in connectionState=failed
-           even when TURN credentials are correct. */
+           even when TURN credentials are correct.
+
+           CRITICAL: force direction back to sendrecv before createOffer.
+           After a recvonly answer, currentDirection is sendonly and a plain
+           createOffer() would offer sendonly again - client can never start
+           sending video then. */
         recoverVideoTried = true;
         console.warn('⚠️ No inbound client video - renegotiating (no ICE restart)', {
             direction: videoT && videoT.direction,
@@ -1027,7 +1036,11 @@ var CALL = (function () {
 
         showPeerState('Connected. Reconnecting their camera\u2026');
 
+        forceSendrecv();
+
         pc.createOffer().then(function (offer) {
+            console.log('📤 Renegotiation offer video direction:',
+                sdpMediaDirection(offer.sdp, 'video'));
             return pc.setLocalDescription(offer);
         }).then(function () {
             offerSent = true;
@@ -1254,7 +1267,17 @@ var CALL = (function () {
         showPeerState('Connecting\u2026');
 
         attachLocalTracks('offerer').then(function () {
+            forceSendrecv();
             return conn.createOffer();
+        }).then(function (offer) {
+            var videoDir = sdpMediaDirection(offer.sdp, 'video');
+            console.log('📤 KRISTIN: Offer video direction:', videoDir);
+            if (videoDir === 'sendonly' || videoDir === 'inactive') {
+                console.warn('📤 KRISTIN: Offer video was', videoDir, '- forcing sendrecv and recreating');
+                forceSendrecv();
+                return conn.createOffer();
+            }
+            return offer;
         }).then(function (offer) {
             console.log('📤 KRISTIN: Offer created, setting local description');
             return conn.setLocalDescription(offer);
@@ -1272,7 +1295,8 @@ var CALL = (function () {
     // --- the customer's side: answer ---
     function answerOffer(sdp) {
         console.log('📥 SARAH: Received offer, creating answer...');
-        console.log('📥 SARAH: localStream ready?', !!localStream);
+        console.log('📥 SARAH: localStream ready?', !!localStream,
+            'video tracks:', localStream ? localStream.getVideoTracks().length : 0);
 
         if (!localStream) {
             console.log('⏳ SARAH: Waiting for camera/mic before answering...');
@@ -1286,49 +1310,52 @@ var CALL = (function () {
             plainNote('Could not answer the call (' + (err && err.name ? err.name : 'unknown') + ').');
         }
 
-        function doAnswer(conn) {
-            setPhase('connecting');
-            showPeerState('Connecting\u2026');
-
-            return conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
-                console.log('📥 SARAH: Remote description set, attaching tracks then answering');
-                remoteReady = true;
-                flushHeldCandidates();
-                /* MUST finish addTrack/replaceTrack before createAnswer, or the
-                   answer stays recvonly and the agent never sees the client. */
-                return attachLocalTracks('answerer');
-            }).then(function () {
+        function buildAnswer(conn) {
+            return attachLocalTracks('answerer').then(function () {
+                forceSendrecv();
                 return conn.createAnswer();
             }).then(function (answer) {
-                /* Guard: if video is still recvonly, force sendrecv + track and
-                   rebuild the answer once. */
-                var videoT = conn.getTransceivers().find(function (t) {
-                    return t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
-                });
-                var vTrack = localStream.getVideoTracks().filter(function (t) {
-                    return t.readyState === 'live';
-                })[0];
+                var videoDir = sdpMediaDirection(answer.sdp, 'video');
+                console.log('📥 SARAH: Answer video direction:', videoDir);
 
-                if (videoT && vTrack && videoT.direction !== 'sendrecv') {
-                    console.warn('📥 SARAH: video still', videoT.direction, '- forcing sendrecv');
-                    try { videoT.direction = 'sendrecv'; } catch (e) { /* ignore */ }
-                    return Promise.resolve(videoT.sender.replaceTrack(vTrack)).then(function () {
-                        return conn.createAnswer();
+                if (videoDir === 'recvonly' || videoDir === 'inactive' || videoDir === null) {
+                    console.warn('📥 SARAH: Answer video is', videoDir,
+                        '- forcing sendrecv + replaceTrack and recreating answer');
+                    forceSendrecv();
+                    var vTrack = liveTrack('video');
+                    var jobs = [];
+                    conn.getTransceivers().forEach(function (t) {
+                        if (t.stopped) { return; }
+                        if (!(t.receiver && t.receiver.track && t.receiver.track.kind === 'video')) {
+                            return;
+                        }
+                        if (vTrack) {
+                            jobs.push(Promise.resolve(t.sender.replaceTrack(vTrack)));
+                            videoSenderRef = t.sender;
+                        }
                     });
-                }
-
-                if (videoT && vTrack && !(videoT.sender && videoT.sender.track)) {
-                    console.warn('📥 SARAH: video sender has no track - attaching');
-                    return Promise.resolve(videoT.sender.replaceTrack(vTrack)).then(function () {
+                    return Promise.all(jobs).then(function () {
                         return conn.createAnswer();
                     });
                 }
 
                 return answer;
+            });
+        }
+
+        function doAnswer(conn) {
+            setPhase('connecting');
+            showPeerState('Connecting\u2026');
+
+            return conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
+                console.log('📥 SARAH: Remote description set; offer video dir:',
+                    sdpMediaDirection(typeof sdp === 'string' ? sdp : (sdp && sdp.sdp), 'video'));
+                remoteReady = true;
+                flushHeldCandidates();
+                return buildAnswer(conn);
             }).then(function (answer) {
-                console.log('📥 SARAH: Answer created', {
-                    videoSendrecv: /m=video[\s\S]*?\na=sendrecv/i.test(answer.sdp || ''),
-                    videoRecvonly: /m=video[\s\S]*?\na=recvonly/i.test(answer.sdp || ''),
+                console.log('📥 SARAH: Final answer', {
+                    videoDir: sdpMediaDirection(answer.sdp, 'video'),
                     directions: conn.getTransceivers().map(function (t) {
                         return {
                             mid: t.mid,
