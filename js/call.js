@@ -823,17 +823,14 @@ var CALL = (function () {
        THE PEER CONNECTION
        ====================================================================== */
 
-    /* Attach local mic/camera to the peer connection.
+    /* Attach local mic/camera. Always returns a Promise so createAnswer waits.
 
-       ANSWERER: setRemoteDescription(offer) first, then put tracks on the
-       offer's transceivers with replaceTrack + direction sendrecv. Using
-       addTransceiver before the offer creates orphan m-lines and the answer
-       stays recvonly - agent never gets client video.
-
-       OFFERER: addTrack before createOffer (with empty sendrecv slots if a
-       device is missing so the camera button can replaceTrack later). */
+       ANSWERER must use addTrack AFTER setRemoteDescription(offer). That binds
+       to the offer m-lines and upgrades recvonly → sendrecv. Non-awaited
+       replaceTrack before createAnswer was the regression that left the agent
+       without client video while the client still saw the agent. */
     function attachLocalTracks(role) {
-        if (!pc) { return; }
+        if (!pc) { return Promise.resolve(); }
 
         var audioTrack = null;
         var videoTrack = null;
@@ -857,54 +854,64 @@ var CALL = (function () {
         });
 
         if (role === 'answerer') {
-            var gotAudio = false;
-            var gotVideo = false;
+            var jobs = [];
+
+            if (localStream) {
+                [audioTrack, videoTrack].forEach(function (track) {
+                    if (!track) { return; }
+
+                    var existing = pc.getSenders().find(function (s) {
+                        return s.track === track
+                            || (s.track && s.track.kind === track.kind);
+                    });
+
+                    if (existing && existing.track === track) {
+                        if (track.kind === 'audio') { audioSenderRef = existing; }
+                        if (track.kind === 'video') { videoSenderRef = existing; }
+                        return;
+                    }
+
+                    if (existing && !existing.track) {
+                        /* Offer created a null sender on this m-line - attach to it. */
+                        jobs.push(Promise.resolve(existing.replaceTrack(track)));
+                        if (track.kind === 'audio') { audioSenderRef = existing; }
+                        if (track.kind === 'video') { videoSenderRef = existing; }
+                        return;
+                    }
+
+                    if (existing && existing.track && existing.track !== track) {
+                        jobs.push(Promise.resolve(existing.replaceTrack(track)));
+                        if (track.kind === 'audio') { audioSenderRef = existing; }
+                        if (track.kind === 'video') { videoSenderRef = existing; }
+                        return;
+                    }
+
+                    /* Preferred path: addTrack reuses the offer transceiver and
+                       upgrades direction to sendrecv before createAnswer. */
+                    var sender = pc.addTrack(track, localStream);
+                    if (track.kind === 'audio') { audioSenderRef = sender; }
+                    if (track.kind === 'video') { videoSenderRef = sender; }
+                });
+            }
 
             pc.getTransceivers().forEach(function (t) {
                 if (t.stopped) { return; }
-
-                var kind = t.receiver && t.receiver.track && t.receiver.track.kind;
-                if (!kind) { return; }
-
-                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
-
-                if (kind === 'audio') {
-                    audioSenderRef = t.sender;
-                    if (audioTrack) {
-                        t.sender.replaceTrack(audioTrack);
-                        gotAudio = true;
-                    }
-                }
-
-                if (kind === 'video') {
-                    videoSenderRef = t.sender;
-                    if (videoTrack) {
-                        t.sender.replaceTrack(videoTrack);
-                        gotVideo = true;
-                    }
+                if (t.direction === 'recvonly' || t.direction === 'inactive') {
+                    try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
                 }
             });
 
-            /* Fallback if SRD did not expose receiver kinds for some reason. */
-            if (localStream) {
-                if (audioTrack && !gotAudio) {
-                    audioSenderRef = pc.addTrack(audioTrack, localStream);
-                }
-                if (videoTrack && !gotVideo) {
-                    videoSenderRef = pc.addTrack(videoTrack, localStream);
-                }
-            }
-
-            console.log('🎙️ answerer senders', pc.getTransceivers().map(function (t) {
-                return {
-                    mid: t.mid,
-                    direction: t.direction,
-                    sending: t.sender && t.sender.track
-                        ? t.sender.track.kind + ':' + t.sender.track.readyState
-                        : null
-                };
-            }));
-            return;
+            return Promise.all(jobs).then(function () {
+                console.log('🎙️ answerer senders ready', pc.getTransceivers().map(function (t) {
+                    return {
+                        mid: t.mid,
+                        direction: t.direction,
+                        sending: t.sender && t.sender.track
+                            ? t.sender.track.kind + ':' + t.sender.track.readyState
+                            : null
+                    };
+                }));
+            });
         }
 
         /* ---- offerer ---- */
@@ -954,11 +961,14 @@ var CALL = (function () {
                 streams: localStream ? [localStream] : []
             }).sender;
         }
+
+        return Promise.resolve();
     }
 
-    /* If we are the offerer and the peer answered without sending video
-       (currentDirection sendonly/inactive), force one renegotiation so they
-       re-answer with replaceTrack/addTrack on the video m-line. */
+    /* If the peer answered without sending video, renegotiate once.
+       IMPORTANT: a muted inbound receiver track is NORMAL when the remote
+       answered recvonly - do NOT treat that as "waiting for frames" and skip
+       renegotiation (that was why recovery never fired). */
     function recoverMissingRemoteVideo() {
         if (recoverVideoTried || !pc || !room || !room.isOfferer) { return; }
         if (pc.connectionState !== 'connected') { return; }
@@ -970,44 +980,44 @@ var CALL = (function () {
             }
         });
 
-        var inboundLive = videoT
-            && videoT.receiver.track.readyState === 'live'
-            && !videoT.receiver.track.muted;
+        var dir = videoT ? videoT.currentDirection : null;
+        var track = videoT && videoT.receiver.track;
+        var inboundLive = track && track.readyState === 'live' && !track.muted;
+        var remoteSending = (dir === 'sendrecv' || dir === 'recvonly');
 
         if (inboundLive) {
-            showPeerVideo(remoteStream || new MediaStream([videoT.receiver.track]));
+            showPeerVideo(remoteStream || new MediaStream([track]));
             showPeerState('');
             return;
         }
 
-        /* Still waiting for first frames - give unmute a chance. */
-        if (videoT && videoT.receiver.track.readyState === 'live' && videoT.receiver.track.muted) {
-            showPeerVideo(remoteStream || new MediaStream([videoT.receiver.track]));
+        /* Only wait for first frames when the remote is negotiated to SEND. */
+        if (remoteSending && track && track.readyState === 'live' && track.muted) {
+            showPeerVideo(remoteStream || new MediaStream([track]));
             showPeerState('Connected. Waiting for their video\u2026');
+            window.setTimeout(function () {
+                if (!recoverVideoTried) { recoverMissingRemoteVideo(); }
+            }, 2500);
             return;
         }
 
-        var remoteNotSending = !videoT
-            || videoT.currentDirection === 'sendonly'
-            || videoT.currentDirection === 'inactive';
-
-        if (!remoteNotSending) { return; }
-
+        /* sendonly / inactive / null → client is not sending. Renegotiate. */
         recoverVideoTried = true;
-        console.warn('⚠️ No inbound client video - renegotiating', videoT && {
-            direction: videoT.direction,
-            currentDirection: videoT.currentDirection
+        console.warn('⚠️ No inbound client video - renegotiating', {
+            direction: videoT && videoT.direction,
+            currentDirection: dir
         });
 
         showPeerState('Connected. Reconnecting their camera\u2026');
 
-        pc.createOffer().then(function (offer) {
+        pc.createOffer({ iceRestart: true }).then(function (offer) {
             return pc.setLocalDescription(offer);
         }).then(function () {
             offerSent = true;
             queueSignal('offer', JSON.stringify(pc.localDescription));
         }, function (err) {
             console.error('Renegotiation failed', err);
+            recoverVideoTried = false;
         });
     }
 
@@ -1025,14 +1035,9 @@ var CALL = (function () {
             iceCandidatePoolSize: 4
         });
 
-        /* Their audio and video arriving. ontrack fires once per track, so we
-           collect them into one stream rather than replacing it each time. */
         pc.ontrack = function (event) {
             console.log('🎥 ONTRACK FIRED:', event.track.kind, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
 
-            /* Always accumulate into our own MediaStream. Relying on
-               event.streams[0] is unreliable when the answerer used
-               replaceTrack without a matching stream id. */
             if (!remoteStream) { remoteStream = new MediaStream(); }
             if (remoteStream.getTracks().indexOf(event.track) === -1) {
                 remoteStream.addTrack(event.track);
@@ -1088,7 +1093,8 @@ var CALL = (function () {
                 setPhase('live');
                 $('#cam-note').prop('hidden', true);
 
-                /* Answerer: re-assert we are sending, in case replaceTrack raced. */
+                /* Answerer: ensure tracks are on the senders (replaceTrack is
+                   enough mid-call IF the answer was already sendrecv). */
                 if (room && !room.isOfferer) {
                     attachLocalTracks('answerer');
                 }
@@ -1121,11 +1127,13 @@ var CALL = (function () {
                     if (waiting) {
                         if (remoteStream) { showPeerVideo(remoteStream); }
                         showPeerState('Connected. Waiting for their video\u2026');
+                        recoverMissingRemoteVideo();
                         return;
                     }
 
                     showPeerState('Connected. Their camera is off, so you will hear ' +
                         'them but not see them.');
+                    recoverMissingRemoteVideo();
                 }, 4000);
                 return;
             }
@@ -1188,9 +1196,9 @@ var CALL = (function () {
         setPhase('connecting');
         showPeerState('Connecting\u2026');
 
-        attachLocalTracks('offerer');
-
-        conn.createOffer().then(function (offer) {
+        attachLocalTracks('offerer').then(function () {
+            return conn.createOffer();
+        }).then(function (offer) {
             console.log('📤 KRISTIN: Offer created, setting local description');
             return conn.setLocalDescription(offer);
         }).then(function () {
@@ -1208,53 +1216,99 @@ var CALL = (function () {
     function answerOffer(sdp) {
         console.log('📥 SARAH: Received offer, creating answer...');
         console.log('📥 SARAH: localStream ready?', !!localStream);
-        
-        /* WAIT FOR MEDIA: If we don't have our camera/mic yet, we can't send tracks.
-           Store the offer and answer it once media is ready. */
+
         if (!localStream) {
             console.log('⏳ SARAH: Waiting for camera/mic before answering...');
             pendingOffer = sdp;
             return;
         }
-        
-        /* A SECOND offer means they are calling again - after a reload, or after
-           dropping out. Start from a clean connection, because the old one is
-           tied to the previous attempt. */
-        if (remoteReady || pc) { 
-            console.log('📥 SARAH: Resetting connection for fresh start');
-            resetConnection(); 
-        }
 
-        var conn = ensureConnection();
-
-        setPhase('connecting');
-        showPeerState('Connecting\u2026');
-
-        conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
-            console.log('📥 SARAH: Remote description set, attaching local tracks via addTrack');
-            remoteReady = true;
-            flushHeldCandidates();
-            /* Offer applied first → browser has the m-lines → addTrack binds to them. */
-            attachLocalTracks('answerer');
-            return conn.createAnswer();
-        }).then(function (answer) {
-            console.log('📥 SARAH: Answer created', {
-                hasSendVideo: /m=video[\s\S]*?a=sendrecv/i.test(answer.sdp || '')
-                    || /a=sendrecv[\s\S]*?m=video/i.test(answer.sdp || ''),
-                directions: conn.getTransceivers().map(function (t) {
-                    return { mid: t.mid, direction: t.direction, current: t.currentDirection,
-                        sending: !!(t.sender && t.sender.track) };
-                })
-            });
-            return conn.setLocalDescription(answer);
-        }).then(function () {
-            console.log('📥 SARAH: Answer sent to signaling');
-            queueSignal('answer', JSON.stringify(conn.localDescription));
-        }, function (err) {
+        function onAnswerFail(err) {
             console.error('❌ SARAH: Answer failed:', err);
             setPhase('failed');
             plainNote('Could not answer the call (' + (err && err.name ? err.name : 'unknown') + ').');
-        });
+        }
+
+        function doAnswer(conn) {
+            setPhase('connecting');
+            showPeerState('Connecting\u2026');
+
+            return conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
+                console.log('📥 SARAH: Remote description set, attaching tracks then answering');
+                remoteReady = true;
+                flushHeldCandidates();
+                /* MUST finish addTrack/replaceTrack before createAnswer, or the
+                   answer stays recvonly and the agent never sees the client. */
+                return attachLocalTracks('answerer');
+            }).then(function () {
+                return conn.createAnswer();
+            }).then(function (answer) {
+                /* Guard: if video is still recvonly, force sendrecv + track and
+                   rebuild the answer once. */
+                var videoT = conn.getTransceivers().find(function (t) {
+                    return t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
+                });
+                var vTrack = localStream.getVideoTracks().filter(function (t) {
+                    return t.readyState === 'live';
+                })[0];
+
+                if (videoT && vTrack && videoT.direction !== 'sendrecv') {
+                    console.warn('📥 SARAH: video still', videoT.direction, '- forcing sendrecv');
+                    try { videoT.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+                    return Promise.resolve(videoT.sender.replaceTrack(vTrack)).then(function () {
+                        return conn.createAnswer();
+                    });
+                }
+
+                if (videoT && vTrack && !(videoT.sender && videoT.sender.track)) {
+                    console.warn('📥 SARAH: video sender has no track - attaching');
+                    return Promise.resolve(videoT.sender.replaceTrack(vTrack)).then(function () {
+                        return conn.createAnswer();
+                    });
+                }
+
+                return answer;
+            }).then(function (answer) {
+                console.log('📥 SARAH: Answer created', {
+                    videoSendrecv: /m=video[\s\S]*?\na=sendrecv/i.test(answer.sdp || ''),
+                    videoRecvonly: /m=video[\s\S]*?\na=recvonly/i.test(answer.sdp || ''),
+                    directions: conn.getTransceivers().map(function (t) {
+                        return {
+                            mid: t.mid,
+                            direction: t.direction,
+                            sending: t.sender && t.sender.track
+                                ? t.sender.track.kind + ':' + t.sender.track.readyState
+                                : null
+                        };
+                    })
+                });
+                return conn.setLocalDescription(answer);
+            }).then(function () {
+                console.log('📥 SARAH: Answer sent to signaling');
+                queueSignal('answer', JSON.stringify(conn.localDescription));
+            });
+        }
+
+        /* Live renegotiation: answer in place. Destroying the PC while the
+           agent keeps theirs breaks ICE and recreates one-way video. */
+        if (pc && (pc.signalingState === 'have-remote-offer'
+            || pc.connectionState === 'connected'
+            || pc.connectionState === 'connecting')) {
+            console.log('📥 SARAH: Answering in place (renegotiation)');
+            doAnswer(pc).then(null, function (err) {
+                console.warn('📥 SARAH: In-place answer failed, full reset', err);
+                resetConnection();
+                doAnswer(ensureConnection()).then(null, onAnswerFail);
+            });
+            return;
+        }
+
+        if (remoteReady || pc) {
+            console.log('📥 SARAH: Resetting connection for fresh start');
+            resetConnection();
+        }
+
+        doAnswer(ensureConnection()).then(null, onAnswerFail);
     }
 
     function handleSignal(signal) {
