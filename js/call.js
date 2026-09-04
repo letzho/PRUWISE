@@ -800,6 +800,78 @@ var CALL = (function () {
        THE PEER CONNECTION
        ====================================================================== */
 
+    /* Attach local mic/camera to the peer connection.
+
+       OFFERER: creates sendrecv transceivers up front so createOffer() advertises
+       both audio and video m-lines (even if a device is missing - camera button
+       can replaceTrack later without renegotiation).
+
+       ANSWERER: must NOT call addTransceiver before setRemoteDescription(offer).
+       Pre-created addTransceiver slots do not associate with the offer's m-lines;
+       the answer then stays recvonly on those lines. Symptom: customer sees the
+       representative, but the representative never gets the customer's video
+       ("Connected. Their camera is off") even though the customer's self-view
+       works. Attach to the offer's transceivers with replaceTrack instead. */
+    function attachLocalSenders() {
+        if (!pc) { return Promise.resolve(); }
+
+        var streams = localStream ? [localStream] : [];
+        var audioTrack = localStream ? localStream.getAudioTracks()[0] : null;
+        var videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
+
+        console.log('🎙️ Attaching local senders:', {
+            hasAudioTrack: !!audioTrack,
+            hasVideoTrack: !!videoTrack,
+            transceiverCount: pc.getTransceivers().length
+        });
+
+        var existing = pc.getTransceivers();
+
+        if (!existing.length) {
+            audioSenderRef = pc.addTransceiver(audioTrack || 'audio', {
+                direction: 'sendrecv', streams: streams
+            }).sender;
+
+            videoSenderRef = pc.addTransceiver(videoTrack || 'video', {
+                direction: 'sendrecv', streams: streams
+            }).sender;
+
+            return Promise.resolve();
+        }
+
+        var jobs = [];
+
+        existing.forEach(function (t) {
+            var kind = (t.receiver && t.receiver.track && t.receiver.track.kind)
+                || (t.sender && t.sender.track && t.sender.track.kind)
+                || null;
+
+            if (kind === 'audio') {
+                audioSenderRef = t.sender;
+                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+                jobs.push(Promise.resolve(t.sender.replaceTrack(audioTrack || null)));
+            }
+
+            if (kind === 'video') {
+                videoSenderRef = t.sender;
+                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+                jobs.push(Promise.resolve(t.sender.replaceTrack(videoTrack || null)));
+            }
+        });
+
+        /* Fallback: if kind matching found nothing, addTrack will bind to the
+           unused recvonly transceivers created by setRemoteDescription. */
+        if (!jobs.length && localStream) {
+            localStream.getTracks().forEach(function (track) {
+                var sender = pc.addTrack(track, localStream);
+                if (track.kind === 'audio') { audioSenderRef = sender; }
+                if (track.kind === 'video') { videoSenderRef = sender; }
+            });
+        }
+
+        return Promise.all(jobs).then(function () {});
+    }
+
     function ensureConnection() {
         if (pc) { return pc; }
 
@@ -810,39 +882,6 @@ var CALL = (function () {
         }
 
         pc = new RTCPeerConnection({ iceServers: room.iceServers });
-
-        /* ALWAYS create one audio slot and one video slot, even when we have no
-           camera or microphone to put in them.
-
-           addTransceiver takes either a real track or just the word 'audio' or
-           'video', and either way it creates a SENDER we can keep hold of. That
-           matters because of what happens later: swapping what a sender is
-           sending is free, but ADDING a sender to a live connection means a fresh
-           offer and answer.
-
-           So reserving both slots up front is what lets the camera button work at
-           all - including the case where somebody joins with their camera off and
-           turns it on mid-call. Without this, that would need a renegotiation
-           dance, and on the answering side it could not be started at all. */
-        var streams = localStream ? [localStream] : [];
-        var audioTrack = localStream ? localStream.getAudioTracks()[0] : null;
-        var videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
-
-        console.log('🎙️ Adding transceivers:', {
-            hasAudioTrack: !!audioTrack,
-            hasVideoTrack: !!videoTrack,
-            hasStream: !!localStream
-        });
-
-        audioSenderRef = pc.addTransceiver(audioTrack || 'audio', {
-            direction: 'sendrecv', streams: streams
-        }).sender;
-
-        videoSenderRef = pc.addTransceiver(videoTrack || 'video', {
-            direction: 'sendrecv', streams: streams
-        }).sender;
-
-        console.log('✅ Transceivers added');
 
         /* Their audio and video arriving. ontrack fires once per track, so we
            collect them into one stream rather than replacing it each time. */
@@ -880,6 +919,7 @@ var CALL = (function () {
                 event.track.addEventListener('unmute', function () {
                     console.log('📹 Video track unmuted');
                     showPeerVideo(remoteStream);
+                    showPeerState('');
                 });
 
                 /* And if they turn their camera off mid-call the track ends. Back to
@@ -936,16 +976,32 @@ var CALL = (function () {
                 window.setTimeout(function () {
                     if (!pc || pc.connectionState !== 'connected') { return; }
 
-                    var hasVideo = remoteStream
-                        && remoteStream.getVideoTracks().some(function (t) {
-                            return t.readyState === 'live' && !t.muted;
-                        });
+                    /* Prefer getReceivers over remoteStream - a track can exist on
+                       the PC before we have folded it into remoteStream. */
+                    var videoTracks = pc.getReceivers()
+                        .map(function (r) { return r.track; })
+                        .filter(function (t) { return t && t.kind === 'video'; });
 
-                    if (!hasVideo) {
-                        showPeerState('Connected. Their camera is off, so you will hear ' +
-                            'them but not see them.');
+                    var hasLive = videoTracks.some(function (t) {
+                        return t.readyState === 'live' && !t.muted;
+                    });
+                    var waiting = videoTracks.some(function (t) {
+                        return t.readyState === 'live' && t.muted;
+                    });
+
+                    if (hasLive) {
+                        showPeerState('');
+                        return;
                     }
-                }, 1500);
+
+                    if (waiting) {
+                        showPeerState('Connected. Waiting for their video\u2026');
+                        return;
+                    }
+
+                    showPeerState('Connected. Their camera is off, so you will hear ' +
+                        'them but not see them.');
+                }, 2500);
                 return;
             }
 
@@ -1009,7 +1065,9 @@ var CALL = (function () {
         setPhase('connecting');
         showPeerState('Connecting\u2026');
 
-        conn.createOffer().then(function (offer) {
+        attachLocalSenders().then(function () {
+            return conn.createOffer();
+        }).then(function (offer) {
             console.log('📤 KRISTIN: Offer created, setting local description');
             return conn.setLocalDescription(offer);
         }).then(function () {
@@ -1050,9 +1108,14 @@ var CALL = (function () {
         showPeerState('Connecting\u2026');
 
         conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
-            console.log('📥 SARAH: Remote description set, creating answer');
+            console.log('📥 SARAH: Remote description set, attaching local tracks');
             remoteReady = true;
             flushHeldCandidates();
+            /* Apply the offer FIRST so the browser creates the matching
+               transceivers, THEN put our camera/mic on those same m-lines. */
+            return attachLocalSenders();
+        }).then(function () {
+            console.log('📥 SARAH: Creating answer');
             return conn.createAnswer();
         }).then(function (answer) {
             console.log('📥 SARAH: Answer created, setting local description');
@@ -2726,8 +2789,23 @@ var CALL = (function () {
        for it. Searching by track kind does not work once the track has been
        removed - a sender with no track has nothing to identify it by. */
     function videoSender(use) {
-        if (!pc || !videoSenderRef) { return; }
-        use(videoSenderRef);
+        if (!pc) { return; }
+
+        var sender = videoSenderRef;
+
+        if (!sender) {
+            pc.getTransceivers().some(function (t) {
+                var kind = (t.receiver && t.receiver.track && t.receiver.track.kind)
+                    || (t.sender && t.sender.track && t.sender.track.kind);
+                if (kind !== 'video') { return false; }
+                sender = t.sender;
+                videoSenderRef = sender;
+                return true;
+            });
+        }
+
+        if (!sender) { return; }
+        use(sender);
     }
 
 
