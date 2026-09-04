@@ -109,8 +109,20 @@ function buildIceServers(): { servers: IceServer[]; usingCustomTurn: boolean } {
     const turnCredential = env.turnCredential;
 
     if (turnUrls && turnUsername && turnCredential) {
+        /* Merge user TURN_URLS with the Metered-recommended set so a short
+           Vercel value still covers UDP/TCP/TLS on 80/443. */
+        const recommended = [
+            'stun:stun.relay.metered.ca:80',
+            'turn:global.relay.metered.ca:80',
+            'turn:global.relay.metered.ca:80?transport=tcp',
+            'turn:global.relay.metered.ca:443',
+            'turns:global.relay.metered.ca:443',
+            'turns:global.relay.metered.ca:443?transport=tcp'
+        ];
+        const merged = Array.from(new Set(parseTurnUrls(turnUrls).concat(recommended)));
+
         servers.push({
-            urls: parseTurnUrls(turnUrls),
+            urls: merged,
             username: turnUsername,
             credential: turnCredential
         });

@@ -122,6 +122,7 @@ var CALL = (function () {
     var heldCandidates = [];   // candidates that arrived before we could use them
     var recoverVideoTried = false; // one renegotiation if inbound video never arrives
     var syncFlushWaiting = false;  // queueSignal during an in-flight sync
+    var iceRestartTried = false;   // one ICE restart if connection fails
 
     /* The two senders, kept from when the connection was built. A sender with no
        track cannot be found again by searching, so we hold on to them. */
@@ -405,6 +406,7 @@ var CALL = (function () {
         heldCandidates = [];
         recoverVideoTried = false;
         syncFlushWaiting = false;
+        iceRestartTried = false;
         outSignals = [];
         outLines = [];
         syncFailures = 0;
@@ -1013,16 +1015,19 @@ var CALL = (function () {
             return;
         }
 
-        /* sendonly / inactive / null → client is not sending. Renegotiate. */
+        /* sendonly / inactive / null → client is not sending. Renegotiate
+           media only - do NOT iceRestart here. iceRestart tears down the
+           working ICE/TURN path and often ends in connectionState=failed
+           even when TURN credentials are correct. */
         recoverVideoTried = true;
-        console.warn('⚠️ No inbound client video - renegotiating', {
+        console.warn('⚠️ No inbound client video - renegotiating (no ICE restart)', {
             direction: videoT && videoT.direction,
             currentDirection: dir
         });
 
         showPeerState('Connected. Reconnecting their camera\u2026');
 
-        pc.createOffer({ iceRestart: true }).then(function (offer) {
+        pc.createOffer().then(function (offer) {
             return pc.setLocalDescription(offer);
         }).then(function () {
             offerSent = true;
@@ -1151,18 +1156,30 @@ var CALL = (function () {
             }
 
             if (pc.connectionState === 'failed') {
-                setPhase('failed');
-                if (room && room.usingCustomTurn) {
-                    plainNote('The video call could not connect even with your TURN relay. ' +
-                        'Check TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL on the server ' +
-                        '(Vercel Environment Variables for production - a local .env is not deployed), ' +
-                        'and that both browsers allow camera/microphone.');
-                } else {
-                    plainNote('The video could not connect. No custom TURN relay is configured on the server, ' +
-                        'so only the public fallback was used. Add TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL ' +
-                        'in the Vercel dashboard (Settings → Environment Variables), redeploy, then try again. ' +
-                        'A .env file on your laptop is not sent to production.');
+                /* One ICE restart with TURN before giving up - a brief NAT blip
+                   or a bad first candidate set should not end the call. */
+                if (room && room.isOfferer && !iceRestartTried) {
+                    iceRestartTried = true;
+                    console.warn('⚠️ Connection failed - trying ICE restart via TURN');
+                    setPhase('connecting');
+                    showPeerState('Connection failed. Retrying via relay\u2026');
+                    pc.createOffer({ iceRestart: true }).then(function (offer) {
+                        return pc.setLocalDescription(offer);
+                    }).then(function () {
+                        offerSent = true;
+                        remoteReady = false;
+                        heldCandidates = [];
+                        queueSignal('offer', JSON.stringify(pc.localDescription));
+                    }, function (err) {
+                        console.error('ICE restart failed', err);
+                        setPhase('failed');
+                        plainNote(turnFailMessage());
+                    });
+                    return;
                 }
+
+                setPhase('failed');
+                plainNote(turnFailMessage());
                 return;
             }
 
@@ -1172,7 +1189,26 @@ var CALL = (function () {
             }
         };
 
+        pc.oniceconnectionstatechange = function () {
+            if (!pc) { return; }
+            console.log('🧊 ICE connection state:', pc.iceConnectionState,
+                'gathering:', pc.iceGatheringState);
+        };
+
         return pc;
+    }
+
+    function turnFailMessage() {
+        if (room && room.usingCustomTurn) {
+            return 'The video call could not connect through the TURN relay. ' +
+                'Confirm TURN_URLS includes turn: and turns: on ports 80/443, ' +
+                'TURN_USERNAME / TURN_CREDENTIAL match Metered, both browsers allow ' +
+                'camera/mic, and try two different networks/browsers.';
+        }
+        return 'The video could not connect. No custom TURN relay is configured on the server, ' +
+            'so only the public fallback was used. Add TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL ' +
+            'in the Vercel dashboard (Settings → Environment Variables), redeploy, then try again. ' +
+            'A .env file on your laptop is not sent to production.';
     }
 
     /* Throw the connection away and start clean.
@@ -1186,6 +1222,7 @@ var CALL = (function () {
         remoteReady = false;
         heldCandidates = [];
         recoverVideoTried = false;
+        iceRestartTried = false;
     }
 
     function closeConnection() {
