@@ -120,6 +120,8 @@ var CALL = (function () {
     var offerSent = false;
     var remoteReady = false;   // have we applied their offer or answer yet?
     var heldCandidates = [];   // candidates that arrived before we could use them
+    var recoverVideoTried = false; // one renegotiation if inbound video never arrives
+    var syncFlushWaiting = false;  // queueSignal during an in-flight sync
 
     /* The two senders, kept from when the connection was built. A sender with no
        track cannot be found again by searching, so we hold on to them. */
@@ -401,6 +403,8 @@ var CALL = (function () {
         offerSent = false;
         remoteReady = false;
         heldCandidates = [];
+        recoverVideoTried = false;
+        syncFlushWaiting = false;
         outSignals = [];
         outLines = [];
         syncFailures = 0;
@@ -637,9 +641,18 @@ var CALL = (function () {
        straight after we generate an offer, an answer or a spoken line - so those
        do not sit waiting for the next tick. */
     function syncNow() {
-        if (!room || syncing || phase === 'ended') { return; }
+        if (!room || phase === 'ended') { return; }
+
+        /* Nested queueSignal() during an in-flight sync used to call syncNow()
+           while syncing===true and silently drop the flush. Remember and run
+           again when the current request finishes. */
+        if (syncing) {
+            syncFlushWaiting = true;
+            return;
+        }
 
         syncing = true;
+        syncFlushWaiting = false;
 
         /* splice(0) takes everything out of the queue and empties it in one go.
            If the request fails we put them back - see the failure branch. */
@@ -661,9 +674,17 @@ var CALL = (function () {
                 sinceLine = data.transcriptSince || sinceLine;
             }
 
+            /* SIGNALS BEFORE PRESENCE.
+
+               Presence used to run first and could resetConnection()/makeOffer()
+               in the same tick as an answer arriving. The answer then applied to
+               the wrong PC (or was ignored) - one-way video. Apply mailbox
+               traffic first, then decide whether to (re)offer. */
+            (data.signals || []).forEach(handleSignal);
+
             handlePresence(!!data.peerPresent);
 
-            (data.signals || []).forEach(handleSignal);
+            if (syncFlushWaiting) { syncNow(); }
 
         }, function (err) {
             syncing = false;
@@ -671,6 +692,8 @@ var CALL = (function () {
             // Put the unsent work back at the front of the queue, in order
             outSignals = signals.concat(outSignals);
             outLines = spoken.concat(outLines);
+
+            if (syncFlushWaiting) { syncNow(); }
 
             if (err.status === 401) {
                 stopSync();
@@ -800,37 +823,100 @@ var CALL = (function () {
        THE PEER CONNECTION
        ====================================================================== */
 
-    /* Attach local mic/camera to the peer connection using addTrack only.
+    /* Attach local mic/camera to the peer connection.
 
-       WHY NOT addTransceiver ON THE ANSWERER
+       ANSWERER: setRemoteDescription(offer) first, then put tracks on the
+       offer's transceivers with replaceTrack + direction sendrecv. Using
+       addTransceiver before the offer creates orphan m-lines and the answer
+       stays recvonly - agent never gets client video.
 
-       addTransceiver() before setRemoteDescription(offer) creates EXTRA m-lines
-       that do not bind to the offer. The answer then stays recvonly on the real
-       lines - classic one-way video: customer sees the representative, the
-       representative never gets ontrack for the customer's camera.
-
-       addTrack() after the offer is applied reuses the offer's transceivers.
-       On the offerer, addTrack before createOffer is enough. */
+       OFFERER: addTrack before createOffer (with empty sendrecv slots if a
+       device is missing so the camera button can replaceTrack later). */
     function attachLocalTracks(role) {
         if (!pc) { return; }
 
+        var audioTrack = null;
+        var videoTrack = null;
+
+        if (localStream) {
+            audioTrack = localStream.getAudioTracks().filter(function (t) {
+                return t.readyState === 'live';
+            })[0] || null;
+            videoTrack = localStream.getVideoTracks().filter(function (t) {
+                return t.readyState === 'live';
+            })[0] || null;
+        }
+
+        if (audioTrack) { audioTrack.enabled = true; }
+        if (videoTrack) { videoTrack.enabled = true; }
+
         console.log('🎙️ attachLocalTracks[' + role + ']', {
-            hasStream: !!localStream,
-            audio: localStream ? localStream.getAudioTracks().length : 0,
-            video: localStream ? localStream.getVideoTracks().length : 0,
+            audio: audioTrack ? audioTrack.readyState : null,
+            video: videoTrack ? videoTrack.readyState : null,
             transceiversBefore: pc.getTransceivers().length
         });
 
+        if (role === 'answerer') {
+            var gotAudio = false;
+            var gotVideo = false;
+
+            pc.getTransceivers().forEach(function (t) {
+                if (t.stopped) { return; }
+
+                var kind = t.receiver && t.receiver.track && t.receiver.track.kind;
+                if (!kind) { return; }
+
+                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+
+                if (kind === 'audio') {
+                    audioSenderRef = t.sender;
+                    if (audioTrack) {
+                        t.sender.replaceTrack(audioTrack);
+                        gotAudio = true;
+                    }
+                }
+
+                if (kind === 'video') {
+                    videoSenderRef = t.sender;
+                    if (videoTrack) {
+                        t.sender.replaceTrack(videoTrack);
+                        gotVideo = true;
+                    }
+                }
+            });
+
+            /* Fallback if SRD did not expose receiver kinds for some reason. */
+            if (localStream) {
+                if (audioTrack && !gotAudio) {
+                    audioSenderRef = pc.addTrack(audioTrack, localStream);
+                }
+                if (videoTrack && !gotVideo) {
+                    videoSenderRef = pc.addTrack(videoTrack, localStream);
+                }
+            }
+
+            console.log('🎙️ answerer senders', pc.getTransceivers().map(function (t) {
+                return {
+                    mid: t.mid,
+                    direction: t.direction,
+                    sending: t.sender && t.sender.track
+                        ? t.sender.track.kind + ':' + t.sender.track.readyState
+                        : null
+                };
+            }));
+            return;
+        }
+
+        /* ---- offerer ---- */
         if (localStream) {
             localStream.getTracks().forEach(function (track) {
-                /* Skip if this exact track is already sending. */
+                if (track.readyState !== 'live') { return; }
+
                 var already = pc.getSenders().some(function (s) {
                     return s.track === track;
                 });
                 if (already) { return; }
 
-                /* Skip if we already have a sender for this kind (e.g. after a
-                   replaceTrack from the camera button). */
                 var kindSender = pc.getSenders().find(function (s) {
                     return s.track && s.track.kind === track.kind;
                 });
@@ -847,55 +933,97 @@ var CALL = (function () {
             });
         }
 
-        /* Offerer with no camera/mic still needs m-lines so the other side can
-           send, and so the camera button can replaceTrack later. */
-        if (role === 'offerer') {
-            var haveAudio = pc.getTransceivers().some(function (t) {
-                return (t.receiver.track && t.receiver.track.kind === 'audio')
-                    || (t.sender.track && t.sender.track.kind === 'audio');
-            });
-            var haveVideo = pc.getTransceivers().some(function (t) {
-                return (t.receiver.track && t.receiver.track.kind === 'video')
-                    || (t.sender.track && t.sender.track.kind === 'video');
-            });
-
-            if (!haveAudio) {
-                audioSenderRef = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
-            }
-            if (!haveVideo) {
-                videoSenderRef = pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
-            }
-        }
-
-        /* Make sure every negotiated transceiver can send as well as receive. */
-        pc.getTransceivers().forEach(function (t) {
-            if (t.direction === 'recvonly' || t.direction === 'inactive') {
-                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
-            }
-            var kind = t.receiver && t.receiver.track && t.receiver.track.kind;
-            if (kind === 'audio' && t.sender) { audioSenderRef = audioSenderRef || t.sender; }
-            if (kind === 'video' && t.sender) { videoSenderRef = videoSenderRef || t.sender; }
+        var haveAudio = pc.getTransceivers().some(function (t) {
+            return (t.receiver.track && t.receiver.track.kind === 'audio')
+                || (t.sender.track && t.sender.track.kind === 'audio');
+        });
+        var haveVideo = pc.getTransceivers().some(function (t) {
+            return (t.receiver.track && t.receiver.track.kind === 'video')
+                || (t.sender.track && t.sender.track.kind === 'video');
         });
 
-        console.log('🎙️ attachLocalTracks done', {
-            senders: pc.getSenders().map(function (s) {
-                return s.track ? (s.track.kind + ':' + s.track.readyState) : 'null';
-            }),
-            directions: pc.getTransceivers().map(function (t) { return t.direction; })
+        if (!haveAudio) {
+            audioSenderRef = pc.addTransceiver(audioTrack || 'audio', {
+                direction: 'sendrecv',
+                streams: localStream ? [localStream] : []
+            }).sender;
+        }
+        if (!haveVideo) {
+            videoSenderRef = pc.addTransceiver(videoTrack || 'video', {
+                direction: 'sendrecv',
+                streams: localStream ? [localStream] : []
+            }).sender;
+        }
+    }
+
+    /* If we are the offerer and the peer answered without sending video
+       (currentDirection sendonly/inactive), force one renegotiation so they
+       re-answer with replaceTrack/addTrack on the video m-line. */
+    function recoverMissingRemoteVideo() {
+        if (recoverVideoTried || !pc || !room || !room.isOfferer) { return; }
+        if (pc.connectionState !== 'connected') { return; }
+
+        var videoT = null;
+        pc.getTransceivers().forEach(function (t) {
+            if (t.receiver && t.receiver.track && t.receiver.track.kind === 'video') {
+                videoT = t;
+            }
+        });
+
+        var inboundLive = videoT
+            && videoT.receiver.track.readyState === 'live'
+            && !videoT.receiver.track.muted;
+
+        if (inboundLive) {
+            showPeerVideo(remoteStream || new MediaStream([videoT.receiver.track]));
+            showPeerState('');
+            return;
+        }
+
+        /* Still waiting for first frames - give unmute a chance. */
+        if (videoT && videoT.receiver.track.readyState === 'live' && videoT.receiver.track.muted) {
+            showPeerVideo(remoteStream || new MediaStream([videoT.receiver.track]));
+            showPeerState('Connected. Waiting for their video\u2026');
+            return;
+        }
+
+        var remoteNotSending = !videoT
+            || videoT.currentDirection === 'sendonly'
+            || videoT.currentDirection === 'inactive';
+
+        if (!remoteNotSending) { return; }
+
+        recoverVideoTried = true;
+        console.warn('⚠️ No inbound client video - renegotiating', videoT && {
+            direction: videoT.direction,
+            currentDirection: videoT.currentDirection
+        });
+
+        showPeerState('Connected. Reconnecting their camera\u2026');
+
+        pc.createOffer().then(function (offer) {
+            return pc.setLocalDescription(offer);
+        }).then(function () {
+            offerSent = true;
+            queueSignal('offer', JSON.stringify(pc.localDescription));
+        }, function (err) {
+            console.error('Renegotiation failed', err);
         });
     }
 
     function ensureConnection() {
         if (pc) { return pc; }
 
-        console.log('🔗 Creating peer connection (build attachLocalTracks)...',
-            'localStream exists:', !!localStream);
+        console.log('🔗 Creating peer connection...', 'localStream exists:', !!localStream);
         if (localStream) {
             console.log('   Audio tracks:', localStream.getAudioTracks().length);
             console.log('   Video tracks:', localStream.getVideoTracks().length);
         }
 
-        pc = new RTCPeerConnection({ iceServers: room.iceServers });
+        pc = new RTCPeerConnection({
+            iceServers: room.iceServers,
+            iceCandidatePoolSize: 4
+        });
 
         /* Their audio and video arriving. ontrack fires once per track, so we
            collect them into one stream rather than replacing it each time. */
@@ -903,28 +1031,17 @@ var CALL = (function () {
             console.log('🎥 ONTRACK FIRED:', event.track.kind, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
 
             /* Always accumulate into our own MediaStream. Relying on
-               event.streams[0] is unreliable when the answerer used addTrack/
-               replaceTrack without a matching stream id - the agent then got
-               audio on one stream object and never folded video into the
-               element that was showing. */
+               event.streams[0] is unreliable when the answerer used
+               replaceTrack without a matching stream id. */
             if (!remoteStream) { remoteStream = new MediaStream(); }
             if (remoteStream.getTracks().indexOf(event.track) === -1) {
                 remoteStream.addTrack(event.track);
             }
 
-            /* ONLY UNHIDE THE <video> ONCE THERE IS A PICTURE IN IT.
-
-               ontrack fires per track and audio usually arrives first. Attaching an
-               audio-only stream and unhiding the element replaced the other person's
-               avatar with A BLACK RECTANGLE - which reads as "I cannot see them",
-               and was the second half of the reported bug. The avatar is the honest
-               placeholder until a video track actually turns up.
-
-               A track can also arrive MUTED and start producing frames a moment
-               later, so unmute is listened for as well. */
             if (event.track.kind === 'video') {
                 console.log('📹 Video track received, showing peer video');
                 showPeerVideo(remoteStream);
+                showPeerState('');
 
                 event.track.addEventListener('unmute', function () {
                     console.log('📹 Video track unmuted');
@@ -932,8 +1049,6 @@ var CALL = (function () {
                     showPeerState('');
                 });
 
-                /* And if they turn their camera off mid-call the track ends. Back to
-                   the avatar, with a reason, rather than a frozen last frame. */
                 event.track.addEventListener('ended', function () {
                     console.log('📹 Video track ended');
                     hidePeerVideo();
@@ -945,15 +1060,11 @@ var CALL = (function () {
                 console.log('🔊 Audio track received');
             }
 
-            // Now we can tell when they are speaking
             watchLoudness(remoteStream, 'peer');
         };
 
-        /* Each candidate is one possible network route to us. They trickle in
-           over a second or two, and each one goes straight into the queue. */
         pc.onicecandidate = function (event) {
-            if (!event.candidate) { return; }   // null means "that is all of them"
-
+            if (!event.candidate) { return; }
             queueSignal('candidate', JSON.stringify(event.candidate));
         };
 
@@ -964,30 +1075,32 @@ var CALL = (function () {
 
             if (pc.connectionState === 'connected') {
                 console.log('✅ WebRTC Connected! Checking for tracks...');
-                console.log('   Transceivers:', pc.getTransceivers().map(t => ({ 
-                    mid: t.mid, 
-                    direction: t.direction, 
-                    currentDirection: t.currentDirection 
-                })));
+                console.log('   Transceivers:', pc.getTransceivers().map(function (t) { 
+                    return {
+                        mid: t.mid, 
+                        direction: t.direction, 
+                        currentDirection: t.currentDirection,
+                        sending: !!(t.sender && t.sender.track),
+                        receiving: !!(t.receiver && t.receiver.track && !t.receiver.track.muted)
+                    };
+                }));
                 
                 setPhase('live');
                 $('#cam-note').prop('hidden', true);
 
-                /* CONNECTED BUT NO PICTURE IS A THING THAT HAPPENS, and it needs
-                   saying. If the other person denied the camera prompt, or their
-                   webcam is being used by something else, they join with audio only
-                   - and the person looking at their avatar has no way to tell that
-                   apart from a broken app. So the app says which it is.
+                /* Answerer: re-assert we are sending, in case replaceTrack raced. */
+                if (room && !room.isOfferer) {
+                    attachLocalTracks('answerer');
+                }
 
-                   Checked a moment after connecting rather than immediately: a
-                   video track can arrive just after the connection reports
-                   connected, and announcing "camera off" for 200 milliseconds is
-                   worse than saying nothing. */
+                window.setTimeout(function () {
+                    if (!pc || pc.connectionState !== 'connected') { return; }
+                    recoverMissingRemoteVideo();
+                }, 2000);
+
                 window.setTimeout(function () {
                     if (!pc || pc.connectionState !== 'connected') { return; }
 
-                    /* Prefer getReceivers over remoteStream - a track can exist on
-                       the PC before we have folded it into remoteStream. */
                     var videoTracks = pc.getReceivers()
                         .map(function (r) { return r.track; })
                         .filter(function (t) { return t && t.kind === 'video'; });
@@ -1000,25 +1113,24 @@ var CALL = (function () {
                     });
 
                     if (hasLive) {
+                        if (remoteStream) { showPeerVideo(remoteStream); }
                         showPeerState('');
                         return;
                     }
 
                     if (waiting) {
+                        if (remoteStream) { showPeerVideo(remoteStream); }
                         showPeerState('Connected. Waiting for their video\u2026');
                         return;
                     }
 
                     showPeerState('Connected. Their camera is off, so you will hear ' +
                         'them but not see them.');
-                }, 2500);
+                }, 4000);
                 return;
             }
 
             if (pc.connectionState === 'failed') {
-                /* Almost always one thing: neither browser could find a route to
-                   the other, and there is no TURN relay configured to fall back
-                   on. Say that, because "failed" on its own is useless. */
                 setPhase('failed');
                 plainNote('The video could not connect directly between the two computers. ' +
                     'On a home or office network this usually works; on a locked-down or mobile ' +
@@ -1045,6 +1157,7 @@ var CALL = (function () {
         offerSent = false;
         remoteReady = false;
         heldCandidates = [];
+        recoverVideoTried = false;
     }
 
     function closeConnection() {
