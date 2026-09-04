@@ -800,82 +800,96 @@ var CALL = (function () {
        THE PEER CONNECTION
        ====================================================================== */
 
-    /* Attach local mic/camera to the peer connection.
+    /* Attach local mic/camera to the peer connection using addTrack only.
 
-       OFFERER: creates sendrecv transceivers up front so createOffer() advertises
-       both audio and video m-lines (even if a device is missing - camera button
-       can replaceTrack later without renegotiation).
+       WHY NOT addTransceiver ON THE ANSWERER
 
-       ANSWERER: must NOT call addTransceiver before setRemoteDescription(offer).
-       Pre-created addTransceiver slots do not associate with the offer's m-lines;
-       the answer then stays recvonly on those lines. Symptom: customer sees the
-       representative, but the representative never gets the customer's video
-       ("Connected. Their camera is off") even though the customer's self-view
-       works. Attach to the offer's transceivers with replaceTrack instead. */
-    function attachLocalSenders() {
-        if (!pc) { return Promise.resolve(); }
+       addTransceiver() before setRemoteDescription(offer) creates EXTRA m-lines
+       that do not bind to the offer. The answer then stays recvonly on the real
+       lines - classic one-way video: customer sees the representative, the
+       representative never gets ontrack for the customer's camera.
 
-        var streams = localStream ? [localStream] : [];
-        var audioTrack = localStream ? localStream.getAudioTracks()[0] : null;
-        var videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
+       addTrack() after the offer is applied reuses the offer's transceivers.
+       On the offerer, addTrack before createOffer is enough. */
+    function attachLocalTracks(role) {
+        if (!pc) { return; }
 
-        console.log('🎙️ Attaching local senders:', {
-            hasAudioTrack: !!audioTrack,
-            hasVideoTrack: !!videoTrack,
-            transceiverCount: pc.getTransceivers().length
+        console.log('🎙️ attachLocalTracks[' + role + ']', {
+            hasStream: !!localStream,
+            audio: localStream ? localStream.getAudioTracks().length : 0,
+            video: localStream ? localStream.getVideoTracks().length : 0,
+            transceiversBefore: pc.getTransceivers().length
         });
 
-        var existing = pc.getTransceivers();
-
-        if (!existing.length) {
-            audioSenderRef = pc.addTransceiver(audioTrack || 'audio', {
-                direction: 'sendrecv', streams: streams
-            }).sender;
-
-            videoSenderRef = pc.addTransceiver(videoTrack || 'video', {
-                direction: 'sendrecv', streams: streams
-            }).sender;
-
-            return Promise.resolve();
-        }
-
-        var jobs = [];
-
-        existing.forEach(function (t) {
-            var kind = (t.receiver && t.receiver.track && t.receiver.track.kind)
-                || (t.sender && t.sender.track && t.sender.track.kind)
-                || null;
-
-            if (kind === 'audio') {
-                audioSenderRef = t.sender;
-                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
-                jobs.push(Promise.resolve(t.sender.replaceTrack(audioTrack || null)));
-            }
-
-            if (kind === 'video') {
-                videoSenderRef = t.sender;
-                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
-                jobs.push(Promise.resolve(t.sender.replaceTrack(videoTrack || null)));
-            }
-        });
-
-        /* Fallback: if kind matching found nothing, addTrack will bind to the
-           unused recvonly transceivers created by setRemoteDescription. */
-        if (!jobs.length && localStream) {
+        if (localStream) {
             localStream.getTracks().forEach(function (track) {
+                /* Skip if this exact track is already sending. */
+                var already = pc.getSenders().some(function (s) {
+                    return s.track === track;
+                });
+                if (already) { return; }
+
+                /* Skip if we already have a sender for this kind (e.g. after a
+                   replaceTrack from the camera button). */
+                var kindSender = pc.getSenders().find(function (s) {
+                    return s.track && s.track.kind === track.kind;
+                });
+                if (kindSender) {
+                    kindSender.replaceTrack(track);
+                    if (track.kind === 'audio') { audioSenderRef = kindSender; }
+                    if (track.kind === 'video') { videoSenderRef = kindSender; }
+                    return;
+                }
+
                 var sender = pc.addTrack(track, localStream);
                 if (track.kind === 'audio') { audioSenderRef = sender; }
                 if (track.kind === 'video') { videoSenderRef = sender; }
             });
         }
 
-        return Promise.all(jobs).then(function () {});
+        /* Offerer with no camera/mic still needs m-lines so the other side can
+           send, and so the camera button can replaceTrack later. */
+        if (role === 'offerer') {
+            var haveAudio = pc.getTransceivers().some(function (t) {
+                return (t.receiver.track && t.receiver.track.kind === 'audio')
+                    || (t.sender.track && t.sender.track.kind === 'audio');
+            });
+            var haveVideo = pc.getTransceivers().some(function (t) {
+                return (t.receiver.track && t.receiver.track.kind === 'video')
+                    || (t.sender.track && t.sender.track.kind === 'video');
+            });
+
+            if (!haveAudio) {
+                audioSenderRef = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
+            }
+            if (!haveVideo) {
+                videoSenderRef = pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
+            }
+        }
+
+        /* Make sure every negotiated transceiver can send as well as receive. */
+        pc.getTransceivers().forEach(function (t) {
+            if (t.direction === 'recvonly' || t.direction === 'inactive') {
+                try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ }
+            }
+            var kind = t.receiver && t.receiver.track && t.receiver.track.kind;
+            if (kind === 'audio' && t.sender) { audioSenderRef = audioSenderRef || t.sender; }
+            if (kind === 'video' && t.sender) { videoSenderRef = videoSenderRef || t.sender; }
+        });
+
+        console.log('🎙️ attachLocalTracks done', {
+            senders: pc.getSenders().map(function (s) {
+                return s.track ? (s.track.kind + ':' + s.track.readyState) : 'null';
+            }),
+            directions: pc.getTransceivers().map(function (t) { return t.direction; })
+        });
     }
 
     function ensureConnection() {
         if (pc) { return pc; }
 
-        console.log('🔗 Creating peer connection...', 'localStream exists:', !!localStream);
+        console.log('🔗 Creating peer connection (build attachLocalTracks)...',
+            'localStream exists:', !!localStream);
         if (localStream) {
             console.log('   Audio tracks:', localStream.getAudioTracks().length);
             console.log('   Video tracks:', localStream.getVideoTracks().length);
@@ -888,18 +902,14 @@ var CALL = (function () {
         pc.ontrack = function (event) {
             console.log('🎥 ONTRACK FIRED:', event.track.kind, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
 
-            /* Prefer the browser's assembled stream when present. Rebuilding our
-               own MediaStream and addTrack()'ing into it can leave the <video>
-               element stuck on an older track set in some browsers unless
-               srcObject is reassigned every time - which we do in showPeerVideo,
-               but using event.streams[0] is the more reliable path. */
-            if (event.streams && event.streams[0]) {
-                remoteStream = event.streams[0];
-            } else {
-                if (!remoteStream) { remoteStream = new MediaStream(); }
-                if (remoteStream.getTracks().indexOf(event.track) === -1) {
-                    remoteStream.addTrack(event.track);
-                }
+            /* Always accumulate into our own MediaStream. Relying on
+               event.streams[0] is unreliable when the answerer used addTrack/
+               replaceTrack without a matching stream id - the agent then got
+               audio on one stream object and never folded video into the
+               element that was showing. */
+            if (!remoteStream) { remoteStream = new MediaStream(); }
+            if (remoteStream.getTracks().indexOf(event.track) === -1) {
+                remoteStream.addTrack(event.track);
             }
 
             /* ONLY UNHIDE THE <video> ONCE THERE IS A PICTURE IN IT.
@@ -1065,9 +1075,9 @@ var CALL = (function () {
         setPhase('connecting');
         showPeerState('Connecting\u2026');
 
-        attachLocalSenders().then(function () {
-            return conn.createOffer();
-        }).then(function (offer) {
+        attachLocalTracks('offerer');
+
+        conn.createOffer().then(function (offer) {
             console.log('📤 KRISTIN: Offer created, setting local description');
             return conn.setLocalDescription(offer);
         }).then(function () {
@@ -1108,17 +1118,21 @@ var CALL = (function () {
         showPeerState('Connecting\u2026');
 
         conn.setRemoteDescription(new RTCSessionDescription(sdp)).then(function () {
-            console.log('📥 SARAH: Remote description set, attaching local tracks');
+            console.log('📥 SARAH: Remote description set, attaching local tracks via addTrack');
             remoteReady = true;
             flushHeldCandidates();
-            /* Apply the offer FIRST so the browser creates the matching
-               transceivers, THEN put our camera/mic on those same m-lines. */
-            return attachLocalSenders();
-        }).then(function () {
-            console.log('📥 SARAH: Creating answer');
+            /* Offer applied first → browser has the m-lines → addTrack binds to them. */
+            attachLocalTracks('answerer');
             return conn.createAnswer();
         }).then(function (answer) {
-            console.log('📥 SARAH: Answer created, setting local description');
+            console.log('📥 SARAH: Answer created', {
+                hasSendVideo: /m=video[\s\S]*?a=sendrecv/i.test(answer.sdp || '')
+                    || /a=sendrecv[\s\S]*?m=video/i.test(answer.sdp || ''),
+                directions: conn.getTransceivers().map(function (t) {
+                    return { mid: t.mid, direction: t.direction, current: t.currentDirection,
+                        sending: !!(t.sender && t.sender.track) };
+                })
+            });
             return conn.setLocalDescription(answer);
         }).then(function () {
             console.log('📥 SARAH: Answer sent to signaling');
