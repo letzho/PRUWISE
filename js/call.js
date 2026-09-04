@@ -741,13 +741,26 @@ var CALL = (function () {
                reliable than any scheme for working out what they missed. */
             if (pinned.length) { broadcastPins(); }
 
-            /* ALREADY CONNECTED? THEN NOTHING HAPPENED.
+            /* ALREADY CONNECTING OR CONNECTED? THEN DO NOT TOUCH THE PC.
 
-               Their heartbeat came back and the video never stopped. Re-offering
-               here is what used to break the call - see connectionAlive(). All
-               that is needed is to undo whatever the drop put on screen. */
-            if (connectionAlive() && remoteStream) {
-                showPeerVideo(remoteStream);
+               Their heartbeat came back and media may still be negotiating.
+               Re-offering here is what used to break the call - see
+               connectionAlive().
+
+               IMPORTANT: do not require remoteStream. ontrack often lands AFTER
+               ICE reports connecting/connected. The old check was:
+
+                 connectionAlive() && remoteStream
+
+               so a presence blip during that gap ran resetConnection() +
+               makeOffer() on the agent (offerer), tearing down a half-built
+               connection. The customer kept the old PC and could still see the
+               agent, while the agent never got a working inbound video track -
+               exactly "client sees agent, agent cannot see client". */
+            if (connectionAlive()) {
+                if (remoteStream && remoteStream.getVideoTracks().length) {
+                    showPeerVideo(remoteStream);
+                }
                 setPhase(pc.connectionState === 'connected' ? 'live' : 'connecting');
                 return;
             }
@@ -835,10 +848,20 @@ var CALL = (function () {
            collect them into one stream rather than replacing it each time. */
         pc.ontrack = function (event) {
             console.log('🎥 ONTRACK FIRED:', event.track.kind, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
-            
-            if (!remoteStream) { remoteStream = new MediaStream(); }
 
-            remoteStream.addTrack(event.track);
+            /* Prefer the browser's assembled stream when present. Rebuilding our
+               own MediaStream and addTrack()'ing into it can leave the <video>
+               element stuck on an older track set in some browsers unless
+               srcObject is reassigned every time - which we do in showPeerVideo,
+               but using event.streams[0] is the more reliable path. */
+            if (event.streams && event.streams[0]) {
+                remoteStream = event.streams[0];
+            } else {
+                if (!remoteStream) { remoteStream = new MediaStream(); }
+                if (remoteStream.getTracks().indexOf(event.track) === -1) {
+                    remoteStream.addTrack(event.track);
+                }
+            }
 
             /* ONLY UNHIDE THE <video> ONCE THERE IS A PICTURE IN IT.
 
@@ -2929,10 +2952,20 @@ var CALL = (function () {
 
     // Always release the camera, or the light stays on
     function stopCamera() {
-        if (!localStream) { return; }
+        if (localStream) {
+            localStream.getTracks().forEach(function (track) { track.stop(); });
+            localStream = null;
+        }
 
-        localStream.getTracks().forEach(function (track) { track.stop(); });
-        localStream = null;
+        /* Clear the local preview too. Leaving a stopped stream on #self-cam
+           shows a black "You" tile (as in the post-hangup agent screenshot)
+           instead of the avatar placeholder. */
+        var selfCam = document.getElementById('self-cam');
+        if (selfCam) {
+            selfCam.srcObject = null;
+            selfCam.hidden = true;
+        }
+        $('#self-placeholder').show();
     }
 
     function clock() {
