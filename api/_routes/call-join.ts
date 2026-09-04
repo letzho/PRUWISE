@@ -62,18 +62,43 @@ type IceServer = {
     credential?: string;
 };
 
-/* Public relay for development and strict NAT fallback. Override via env vars. */
+/* Public relay for development and strict NAT fallback. Override via env vars.
+   openrelay is often overloaded - prefer your own Metered/Twilio credentials in
+   Vercel Environment Variables (TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL).
+   A local .env file is NOT deployed; production only sees Vercel env vars. */
 const DEFAULT_TURN: IceServer = {
     urls: [
         'turn:openrelay.metered.ca:80',
         'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
+        'turn:openrelay.metered.ca:443?transport=tcp',
+        'turns:openrelay.metered.ca:443'
     ],
     username: 'openrelayproject',
     credential: 'openrelayproject'
 };
 
-function buildIceServers(): IceServer[] {
+/* Expand a comma-separated TURN_URLS list. Metered often omits turns: which
+   browsers on https:// need; add it when only turn: host:443 is present. */
+function parseTurnUrls(raw: string): string[] {
+    const urls = raw.split(',').map((url) => url.trim()).filter(Boolean);
+    const extra: string[] = [];
+
+    for (const url of urls) {
+        if (url.startsWith('turn:') && !url.startsWith('turns:')) {
+            const hostPort = url.slice('turn:'.length).split('?')[0] ?? '';
+            if (hostPort.endsWith(':443') || hostPort.includes(':443')) {
+                const turns = `turns:${hostPort}`;
+                if (!urls.includes(turns) && !extra.includes(turns)) {
+                    extra.push(turns);
+                }
+            }
+        }
+    }
+
+    return urls.concat(extra);
+}
+
+function buildIceServers(): { servers: IceServer[]; usingCustomTurn: boolean } {
     const servers: IceServer[] = [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
@@ -85,15 +110,15 @@ function buildIceServers(): IceServer[] {
 
     if (turnUrls && turnUsername && turnCredential) {
         servers.push({
-            urls: turnUrls.split(',').map((url) => url.trim()).filter(Boolean),
+            urls: parseTurnUrls(turnUrls),
             username: turnUsername,
             credential: turnCredential
         });
-    } else {
-        servers.push(DEFAULT_TURN);
+        return { servers, usingCustomTurn: true };
     }
 
-    return servers;
+    servers.push(DEFAULT_TURN);
+    return { servers, usingCustomTurn: false };
 }
 
 /* How long the poller should wait between requests. Sent by the server so the pace
@@ -147,6 +172,8 @@ export default defineHandler(async (req) => {
 
     await audit(user.id, 'call.join', `room ${String(session.room_code)}`, req.ip);
 
+    const ice = buildIceServers();
+
     return ok({
         roomCode: session.room_code,
         callId: Number(session.id),
@@ -158,7 +185,8 @@ export default defineHandler(async (req) => {
         peer: await callPeer(user, session),
         peerPresent: peerPresent(session, role),
         status: session.status,
-        iceServers: buildIceServers(),
+        iceServers: ice.servers,
+        usingCustomTurn: ice.usingCustomTurn,
 
         /* Anything already said. A reload mid-call gets the transcript back rather
            than starting from an empty log. */

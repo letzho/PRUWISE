@@ -579,8 +579,20 @@ var CALL = (function () {
                 isOfferer: data.isOfferer,
                 peer: data.peer || {},
                 iceServers: data.iceServers || [],
+                usingCustomTurn: !!data.usingCustomTurn,
                 pollMs: data.pollMs || DEFAULT_POLL_MS
             };
+
+            console.log('🧊 ICE servers for call:', {
+                count: (room.iceServers || []).length,
+                usingCustomTurn: room.usingCustomTurn,
+                hosts: (room.iceServers || []).map(function (s) {
+                    var urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+                    return urls.map(function (u) {
+                        return String(u).replace(/^turns?:/, '').split('?')[0];
+                    });
+                }).flat()
+            });
 
             /* DELIBERATELY left false, even when the join response says they are
                already here.
@@ -1140,9 +1152,17 @@ var CALL = (function () {
 
             if (pc.connectionState === 'failed') {
                 setPhase('failed');
-                plainNote('The video could not connect directly between the two computers. ' +
-                    'On a home or office network this usually works; on a locked-down or mobile ' +
-                    'network it needs a TURN relay - see the call section of php/config.example.php.');
+                if (room && room.usingCustomTurn) {
+                    plainNote('The video call could not connect even with your TURN relay. ' +
+                        'Check TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL on the server ' +
+                        '(Vercel Environment Variables for production - a local .env is not deployed), ' +
+                        'and that both browsers allow camera/microphone.');
+                } else {
+                    plainNote('The video could not connect. No custom TURN relay is configured on the server, ' +
+                        'so only the public fallback was used. Add TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL ' +
+                        'in the Vercel dashboard (Settings → Environment Variables), redeploy, then try again. ' +
+                        'A .env file on your laptop is not sent to production.');
+                }
                 return;
             }
 
